@@ -35,6 +35,13 @@ public class PosView extends JPanel {
     public final JComboBox<Object> cmbCategory = new JComboBox<>();
     public final JPanel grid = new JPanel(new GridLayout(0, 4, 10, 10));
     public final JLabel lblGridInfo = UiKit.mutedLabel(" ");
+    public final JToggleButton tglAll = new JToggleButton("All", true);
+    public final JToggleButton tglFav = new JToggleButton("\u2665 Favourites");
+    public final JToggleButton tglFrequent = new JToggleButton("Frequent");
+    public final JToggleButton tglRecent = new JToggleButton("Recent");
+    public final JComboBox<String> cmbSort = new JComboBox<>(new String[]{"Sort: Name", "Sort: Best selling", "Sort: Custom order",
+        "Sort: Price low-high", "Sort: Price high-low"});
+    public final JPanel quickBar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 0));
 
     public final JTabbedPane cartTabs = new JTabbedPane();
     public final JButton btnNewCart = UiKit.plain("+ New cart (F8)");
@@ -56,6 +63,9 @@ public class PosView extends JPanel {
     public final JButton btnQty = UiKit.plain("Qty F2");
     public final JButton btnItemDisc = UiKit.plain("Disc F3");
     public final JButton btnRemove = UiKit.plain("Remove");
+    public final JButton btnPrice = UiKit.plain("Price F11");
+    public final JButton btnNote = UiKit.plain("Note");
+    public final JButton btnFavourite = UiKit.plain("\u2665 Fav");
 
     public final JLabel lblItems = new JLabel("0 items");
     public final JLabel lblSubtotal = valueLabel();
@@ -69,6 +79,9 @@ public class PosView extends JPanel {
     public final JButton btnCartDisc = UiKit.plain("Cart disc. (F10)");
     public final JButton btnVoid = UiKit.plain("Void cart");
     public final JButton btnReprint = UiKit.plain("Last receipt (Ctrl+P)");
+    public final JButton btnDrawer = UiKit.plain("Open drawer");
+    public final JButton btnDisplay = UiKit.plain("Customer display");
+    public final JButton btnOffline = UiKit.plain("Offline queue");
     public final JButton btnPay = UiKit.big(UiKit.success("PAY  (F9)"), 62);
     public final JLabel lblStatus = UiKit.mutedLabel(" ");
 
@@ -86,6 +99,18 @@ public class PosView extends JPanel {
         }
         if (i.wholesaleApplied) {
             sb.append(" <span style='color:#7C3AED'>[wholesale qty]</span>");
+        }
+        if (i.overridePrice != null) {
+            sb.append(" <span style='color:#D97706'>[price changed]</span>");
+        }
+        if (i.tierApplied && !i.wholesaleApplied) {
+            sb.append(" <span style='color:#7C3AED'>[qty price]</span>");
+        }
+        if (!i.excludedComponents.isEmpty()) {
+            sb.append(" <span style='color:#64748B'>[without ").append(i.excludedComponents.size()).append(" part(s)]</span>");
+        }
+        if (i.note != null && !i.note.isBlank()) {
+            sb.append("<br><span style='color:#0891B2;font-size:9px'>Note: ").append(esc(i.note)).append("</span>");
         }
         if (!i.serials.isEmpty()) {
             sb.append("<br><span style='color:#64748B;font-size:9px'>SN: ").append(esc(String.join(", ", i.serials))).append("</span>");
@@ -108,7 +133,26 @@ public class PosView extends JPanel {
         JPanel searchBar = new JPanel(new BorderLayout(10, 0));
         searchBar.setOpaque(false);
         searchBar.add(txtScan);
-        searchBar.add(cmbCategory, BorderLayout.EAST);
+        JPanel combos = new JPanel(new BorderLayout(8, 0));
+        combos.setOpaque(false);
+        combos.add(cmbCategory);
+        cmbSort.setPreferredSize(new Dimension(170, 46));
+        combos.add(cmbSort, BorderLayout.EAST);
+        searchBar.add(combos, BorderLayout.EAST);
+        javax.swing.ButtonGroup views = new javax.swing.ButtonGroup();
+        for (JToggleButton t : new JToggleButton[]{tglAll, tglFav, tglFrequent, tglRecent}) {
+            views.add(t);
+            t.setFocusable(false);
+        }
+        JPanel viewRow = new JPanel(new BorderLayout(10, 0));
+        viewRow.setOpaque(false);
+        viewRow.add(UiKit.row(tglAll, tglFav, tglFrequent, tglRecent), BorderLayout.WEST);
+        quickBar.setOpaque(false);
+        viewRow.add(quickBar, BorderLayout.CENTER);
+        JPanel topLeft = new JPanel(new BorderLayout(0, 8));
+        topLeft.setOpaque(false);
+        topLeft.add(searchBar, BorderLayout.NORTH);
+        topLeft.add(viewRow, BorderLayout.SOUTH);
 
         grid.setOpaque(false);
         JPanel gridHolder = new JPanel(new BorderLayout());
@@ -117,15 +161,15 @@ public class PosView extends JPanel {
         JPanel left = new JPanel(new BorderLayout(0, 10));
         left.setOpaque(false);
         left.setBorder(BorderFactory.createEmptyBorder(14, 16, 14, 8));
-        left.add(searchBar, BorderLayout.NORTH);
+        left.add(topLeft, BorderLayout.NORTH);
         left.add(UiKit.scroll(gridHolder));
-        JPanel leftSouth = new JPanel(new java.awt.GridLayout(2, 1, 0, 2));
+        JPanel leftSouth = new JPanel(new BorderLayout(0, 2));
         leftSouth.setOpaque(false);
-        leftSouth.add(lblGridInfo);
-        JLabel keys = UiKit.mutedLabel("<html>F1 search · F2 qty · F3 disc · F4 customer · F5 hold · F6 held · F7 wholesale · "
-                + "F8 new cart · F9 pay · F10 cart disc · Del remove · Ctrl+↑/↓ qty · Ctrl+P reprint</html>");
+        leftSouth.add(lblGridInfo, BorderLayout.NORTH);
+        JLabel keys = UiKit.mutedLabel("<html><div style='width:560px'>F1 search · F2 qty · F3 disc · F4 customer · F5 hold · F6 held · F7 wholesale · "
+                + "F8 new cart · F9 pay · F10 cart disc · F11 price · Del remove · Ctrl+↑/↓ qty · Ctrl+P reprint · Alt+1..8 quick buttons</div></html>");
         keys.setFont(keys.getFont().deriveFont(11.5f));
-        leftSouth.add(keys);
+        leftSouth.add(keys, BorderLayout.CENTER);
         left.add(leftSouth, BorderLayout.SOUTH);
 
         // ---------------- right: cart
@@ -164,9 +208,9 @@ public class PosView extends JPanel {
             b.setFont(b.getFont().deriveFont(Font.BOLD, 18f));
             b.setPreferredSize(new Dimension(48, 38));
         }
-        JPanel lineButtons = new JPanel(new GridLayout(1, 5, 6, 0));
+        JPanel lineButtons = new JPanel(new GridLayout(2, 4, 6, 6));
         lineButtons.setOpaque(false);
-        for (JButton b : new JButton[]{btnMinus, btnPlus, btnQty, btnItemDisc, btnRemove}) {
+        for (JButton b : new JButton[]{btnMinus, btnPlus, btnQty, btnItemDisc, btnPrice, btnNote, btnFavourite, btnRemove}) {
             b.setFocusable(false);
             lineButtons.add(b);
         }
@@ -192,9 +236,9 @@ public class PosView extends JPanel {
         totalBox.add(tl, BorderLayout.WEST);
         totalBox.add(lblTotal, BorderLayout.EAST);
 
-        JPanel actions = new JPanel(new GridLayout(2, 3, 6, 6));
+        JPanel actions = new JPanel(new GridLayout(3, 3, 6, 6));
         actions.setOpaque(false);
-        for (JButton b : new JButton[]{btnHold, btnHeld, btnCartDisc, btnVoid, btnReprint}) {
+        for (JButton b : new JButton[]{btnHold, btnHeld, btnCartDisc, btnVoid, btnReprint, btnDrawer, btnDisplay, btnOffline}) {
             b.setFocusable(false);
             actions.add(b);
         }
@@ -301,7 +345,17 @@ public class PosView extends JPanel {
             top.add(subL, BorderLayout.SOUTH);
             add(top, BorderLayout.CENTER);
             add(bottom, BorderLayout.SOUTH);
-            setToolTipText(first.productName + (first.brandName != null ? " - " + first.brandName : ""));
+            BigDecimal reserved = BigDecimal.ZERO;
+            for (Variant v : vs) {
+                reserved = reserved.add(v.reservedQty);
+            }
+            setToolTipText("<html><b>" + esc(first.productName) + "</b>" + (first.brandName != null ? " - " + esc(first.brandName) : "")
+                    + (first.location != null ? "<br>Shelf: " + esc(first.location) : "")
+                    + (reserved.signum() > 0 ? "<br>Reserved for held carts: " + Money.qty(reserved) : "")
+                    + (first.tiers.isEmpty() ? "" : "<br>Quantity prices available") + "</html>");
+            if (vs.stream().anyMatch(v -> v.favourite)) {
+                name.setText("<html><b><span style='color:#E11D48'>♥</span> " + esc(first.productName) + "</b></html>");
+            }
             Color normal = getBackground();
             addMouseListener(new MouseAdapter() {
                 @Override

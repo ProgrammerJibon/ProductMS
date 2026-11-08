@@ -96,7 +96,7 @@ public class LoginView extends JFrame {
         c.insets = new Insets(6, 0, 4, 0);
         form.add(btnLogin, c);
         c.insets = new Insets(18, 0, 0, 0);
-        form.add(UiKit.mutedLabel("Demo accounts: admin / admin123  ·  cashier / cashier123"), c);
+        form.add(UiKit.mutedLabel("<html>New install: admin / admin123 or cashier / cashier123<br>(you must choose a new password at first sign-in)</html>"), c);
 
         getContentPane().add(brand, BorderLayout.WEST);
         getContentPane().add(form, BorderLayout.CENTER);

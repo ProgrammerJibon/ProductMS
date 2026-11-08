@@ -26,11 +26,15 @@ public class LabelPrintDialog extends JDialog {
 
     private final List<Variant> items = new ArrayList<>();
     private final List<Integer> copies = new ArrayList<>();
-    private final JComboBox<LabelService.Layout> cmbLayout = new JComboBox<>(LabelService.LAYOUTS);
+    private final JComboBox<LabelService.Layout> cmbLayout = new JComboBox<>();
     private final JCheckBox chkShop = new JCheckBox("Shop name", true);
+    private final JCheckBox chkName = new JCheckBox("Name", true);
     private final JCheckBox chkPrice = new JCheckBox("Price", true);
+    private final JCheckBox chkMrp = new JCheckBox("MRP", false);
+    private final JCheckBox chkSku = new JCheckBox("SKU", false);
     private final JCheckBox chkQr = new JCheckBox("QR code", false);
     private final JCheckBox chkWholesale = new JCheckBox("Use wholesale price", false);
+    private final javax.swing.JTextField txtScale = UiKit.field("1.0");
     private final JLabel preview = new JLabel("", SwingConstants.CENTER);
     private final JLabel lblInfo = UiKit.mutedLabel(" ");
     private final CopiesModel model = new CopiesModel();
@@ -56,8 +60,24 @@ public class LabelPrintDialog extends JDialog {
         left.setPreferredSize(new Dimension(430, 0));
         left.add(UiKit.tableCard(table));
         UiKit.Form opts = new UiKit.Form();
-        opts.add("Label stock", cmbLayout);
-        opts.full(UiKit.row(chkShop, chkPrice, chkQr, chkWholesale));
+        JButton btnSaveTpl = UiKit.plain("Save as template...");
+        JButton btnCustom = UiKit.plain("Custom size...");
+        JButton btnDeleteTpl = UiKit.plain("Delete");
+        opts.add("Template", cmbLayout);
+        opts.full(UiKit.row(btnCustom, btnSaveTpl, btnDeleteTpl));
+        opts.full(UiKit.row(chkShop, chkName, chkPrice, chkMrp, chkSku, chkQr));
+        txtScale.setText("1.0");
+        txtScale.setPreferredSize(new Dimension(60, 30));
+        opts.full(UiKit.row(chkWholesale, new javax.swing.JLabel("Text size"), txtScale));
+        btnSaveTpl.addActionListener(e -> saveTemplate());
+        btnCustom.addActionListener(e -> customSize());
+        btnDeleteTpl.addActionListener(e -> UiKit.guard(this, () -> {
+            LabelService.Layout l = (LabelService.Layout) cmbLayout.getSelectedItem();
+            if (l != null && UiKit.confirm(this, "Delete template \"" + l.name + "\"?")) {
+                LabelService.deleteTemplate(l.name);
+                loadTemplates(null);
+            }
+        }));
         JPanel leftSouth = new JPanel(new BorderLayout(0, 8));
         leftSouth.add(UiKit.row(btnAdd, btnRemove), BorderLayout.NORTH);
         leftSouth.add(opts.panel);
@@ -77,10 +97,15 @@ public class LabelPrintDialog extends JDialog {
         setLocationRelativeTo(owner);
 
         Runnable refresh = this::refresh;
-        cmbLayout.addActionListener(e -> refresh.run());
-        for (JCheckBox c : new JCheckBox[]{chkShop, chkPrice, chkQr, chkWholesale}) {
+        cmbLayout.addActionListener(e -> {
+            applyTemplateOptions();
+            refresh.run();
+        });
+        for (JCheckBox c : new JCheckBox[]{chkShop, chkName, chkPrice, chkMrp, chkSku, chkQr, chkWholesale}) {
             c.addActionListener(e -> refresh.run());
         }
+        txtScale.addActionListener(e -> refresh.run());
+        loadTemplates(null);
         model.addTableModelListener(e -> refresh.run());
         btnAdd.addActionListener(e -> {
             Variant v = VariantPickerDialog.pick(this, "Add product to labels", false, false);
@@ -113,15 +138,105 @@ public class LabelPrintDialog extends JDialog {
     private LabelService.Options options() {
         LabelService.Options o = new LabelService.Options();
         o.showShop = chkShop.isSelected();
+        o.showName = chkName.isSelected();
         o.showPrice = chkPrice.isSelected();
+        o.showMrp = chkMrp.isSelected();
+        o.showSku = chkSku.isSelected();
         o.showQr = chkQr.isSelected();
         o.wholesalePrice = chkWholesale.isSelected();
+        try {
+            o.fontScale = Math.max(0.5, Math.min(2.0, Double.parseDouble(txtScale.getText().trim())));
+        } catch (NumberFormatException e) {
+            o.fontScale = 1.0;
+        }
         return o;
+    }
+
+    private boolean loading;
+
+    private void loadTemplates(String select) {
+        UiKit.guard(this, () -> {
+            loading = true;
+            cmbLayout.removeAllItems();
+            java.util.List<LabelService.Layout> list = LabelService.templates();
+            if (list.isEmpty()) {
+                for (LabelService.Layout l : LabelService.LAYOUTS) {
+                    cmbLayout.addItem(l);
+                }
+            }
+            for (LabelService.Layout l : list) {
+                cmbLayout.addItem(l);
+                if (l.name.equals(select)) {
+                    cmbLayout.setSelectedItem(l);
+                }
+            }
+            loading = false;
+            applyTemplateOptions();
+        });
+    }
+
+    private void applyTemplateOptions() {
+        LabelService.Layout l = (LabelService.Layout) cmbLayout.getSelectedItem();
+        if (loading || l == null || l.defaults == null) {
+            return;
+        }
+        chkShop.setSelected(l.defaults.showShop);
+        chkName.setSelected(l.defaults.showName);
+        chkPrice.setSelected(l.defaults.showPrice);
+        chkMrp.setSelected(l.defaults.showMrp);
+        chkSku.setSelected(l.defaults.showSku);
+        chkQr.setSelected(l.defaults.showQr);
+        txtScale.setText(String.valueOf(l.defaults.fontScale));
+    }
+
+    private void saveTemplate() {
+        LabelService.Layout l = (LabelService.Layout) cmbLayout.getSelectedItem();
+        if (l == null) {
+            return;
+        }
+        String name = UiKit.input(this, "Template name:", l.name);
+        if (name == null) {
+            return;
+        }
+        UiKit.guard(this, () -> {
+            LabelService.saveTemplate(new LabelService.Layout(name.trim(), l.widthMm, l.heightMm, l.cols, l.rows, l.roll), options());
+            loadTemplates(name.trim());
+        });
+    }
+
+    private void customSize() {
+        javax.swing.JTextField w = UiKit.field("mm");
+        javax.swing.JTextField h = UiKit.field("mm");
+        javax.swing.JTextField cols = UiKit.field("A4 columns");
+        javax.swing.JTextField rows = UiKit.field("A4 rows");
+        javax.swing.JCheckBox roll = new javax.swing.JCheckBox("Label roll (one label per page)");
+        javax.swing.JTextField name = UiKit.field("Template name");
+        UiKit.Form f = new UiKit.Form();
+        f.add("Name", name);
+        f.add("Label width (mm)", w);
+        f.add("Label height (mm)", h);
+        f.add("Columns on A4", cols);
+        f.add("Rows on A4", rows);
+        f.full(roll);
+        if (javax.swing.JOptionPane.showConfirmDialog(this, f.panel, "Custom label size", javax.swing.JOptionPane.OK_CANCEL_OPTION,
+                javax.swing.JOptionPane.PLAIN_MESSAGE) != javax.swing.JOptionPane.OK_OPTION) {
+            return;
+        }
+        UiKit.guard(this, () -> {
+            LabelService.Layout l = new LabelService.Layout(name.getText().trim(), Double.parseDouble(w.getText().trim()),
+                    Double.parseDouble(h.getText().trim()), roll.isSelected() ? 1 : Integer.parseInt(cols.getText().trim()),
+                    roll.isSelected() ? 1 : Integer.parseInt(rows.getText().trim()), roll.isSelected());
+            LabelService.saveTemplate(l, options());
+            loadTemplates(l.name);
+        });
     }
 
     private void refresh() {
         UiKit.guard(this, () -> {
             LabelService.Layout l = (LabelService.Layout) cmbLayout.getSelectedItem();
+            if (l == null || loading) {
+                return;
+            }
             List<Variant> labels = LabelService.expand(items, copies);
             BufferedImage img = LabelService.preview(labels, l, options(), l.roll ? 4 : 1.2);
             Image scaled = img;

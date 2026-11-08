@@ -33,11 +33,18 @@ public class ReturnDialog extends JDialog {
     private final String[] condition;
     public final JRadioButton rbRefund = new JRadioButton("Refund money", true);
     public final JRadioButton rbExchange = new JRadioButton("Exchange (store credit for new items)");
-    public final JComboBox<String> cmbMethod = new JComboBox<>(new String[]{"CASH", "CARD", "BKASH", "NAGAD", "ROCKET"});
+    public final JComboBox<String> cmbMethod = new JComboBox<>(refundMethods());
     public final JTextField txtReason = UiKit.field("Reason (e.g. wrong size, defective, changed mind)");
     private final JLabel lblTotal = UiKit.title(" ", 16f);
     private final ItemsModel model = new ItemsModel();
     private boolean confirmed;
+
+    private static String[] refundMethods() {
+        java.util.List<String> m = new java.util.ArrayList<>();
+        m.add("ORIGINAL");
+        m.addAll(java.util.Arrays.asList(Payment.methods()));
+        return m.toArray(new String[0]);
+    }
 
     public ReturnDialog(Window owner, Sale sale, boolean exchange) {
         super(owner, "Return items - " + sale.invoiceNo, ModalityType.APPLICATION_MODAL);
@@ -103,10 +110,11 @@ public class ReturnDialog extends JDialog {
         JPanel root = new JPanel(new BorderLayout(0, 10));
         root.setBorder(BorderFactory.createEmptyBorder(14, 14, 14, 14));
         JLabel info = UiKit.mutedLabel("<html>Customer: <b>" + sale.customerName + "</b> · Invoice total "
-                + Money.cur(sale.grandTotal) + " · Paid " + Money.cur(sale.paidTotal)
+                + Money.cur(sale.grandTotal) + " · Paid " + Money.cur(sale.paidTotal) + (sale.refundedTotal.signum() > 0 ? " · already refunded " + Money.cur(sale.refundedTotal) : "")
                 + (sale.dueTotal.signum() > 0 ? " · <span style='color:#DC2626'>Due " + Money.cur(sale.dueTotal)
                         + " (reduced first)</span>" : "")
-                + "<br>Good items go back to stock (same batch). Damaged items are written off as a loss.</html>");
+                + "<br>Good items go back to stock (same batch). Damaged items go to Damaged Stock. "
+                + "Refunds never exceed what was paid; \"Original method(s)\" pays back the way the customer paid.</html>");
         root.add(info, BorderLayout.NORTH);
         root.add(UiKit.tableCard(t));
         JPanel south = new JPanel(new BorderLayout(0, 8));

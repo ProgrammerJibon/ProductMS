@@ -46,6 +46,46 @@ public class Variant {
     /** Opening stock entered for a brand-new variant (product editor only). */
     public BigDecimal openingStock = BigDecimal.ZERO;
 
+    // ---- v3 fields ----
+    public String extraAttributes;
+    public String plu;
+    public BigDecimal mrp = BigDecimal.ZERO;
+    public BigDecimal minPrice = BigDecimal.ZERO;
+    public BigDecimal damagedQty = BigDecimal.ZERO;
+    public BigDecimal reservedQty = BigDecimal.ZERO;
+    public BigDecimal reorderQty = BigDecimal.ZERO;
+    public String location;
+    public boolean favourite;
+    public int posOrder;
+    public BigDecimal soldLast30 = BigDecimal.ZERO;
+    public String tags;
+    public int warrantyMonths;
+    public java.time.LocalDate discountStart;
+    public java.time.LocalDate discountEnd;
+    public String bundlePricing = "FIXED";
+    public BigDecimal bundleDiscountPercent = BigDecimal.ZERO;
+    public boolean deleted;
+    /** Quantity price tiers, ascending by min quantity: [minQty, unitPrice]. */
+    public java.util.List<BigDecimal[]> tiers = new java.util.ArrayList<>();
+    /** Bundle components (bundles only), used for optional parts and SUM_DISCOUNT pricing. */
+    public java.util.List<BundleItem> components = new java.util.ArrayList<>();
+    /** Text form of tiers / packs / extra barcodes used by the product editor grid. */
+    public String tiersText;
+    public String packsText;
+    public String barcodesText;
+
+    /** Is the product discount active today (inside its optional start / end window)? */
+    public boolean discountActive() {
+        java.time.LocalDate today = java.time.LocalDate.now();
+        return !"NONE".equals(discountType) && (discountStart == null || !today.isBefore(discountStart))
+                && (discountEnd == null || !today.isAfter(discountEnd));
+    }
+
+    /** Physical stock on the premises = sellable + damaged (quarantined). */
+    public BigDecimal physicalQty() {
+        return stockQty.add(damagedQty);
+    }
+
     public boolean isBundle() {
         return "BUNDLE".equals(productType);
     }
@@ -57,7 +97,7 @@ public class Variant {
     /** "L / Black / 1 KG" or "" when the product has no variant attributes. */
     public String label() {
         StringBuilder sb = new StringBuilder();
-        for (String s : new String[]{size, colour, weight}) {
+        for (String s : new String[]{size, colour, weight, extraAttributes}) {
             if (s != null && !s.isBlank()) {
                 if (sb.length() > 0) {
                     sb.append(" / ");

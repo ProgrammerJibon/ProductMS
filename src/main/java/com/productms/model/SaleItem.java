@@ -20,6 +20,10 @@ public class SaleItem {
     public BigDecimal unitCost = BigDecimal.ZERO;
     public BigDecimal returnedQty = BigDecimal.ZERO;
     public String serialNumbers;
+    public BigDecimal originalPrice;
+    public int warrantyMonths;
+    public String excludedComponents;
+    public String note;
 
     public String displayName() {
         return variantLabel == null || variantLabel.isBlank() ? productName : productName + " (" + variantLabel + ")";

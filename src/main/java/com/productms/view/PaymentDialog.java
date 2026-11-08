@@ -1,7 +1,9 @@
 package com.productms.view;
 
+import com.productms.dao.PaymentMethodDAO;
 import com.productms.model.Cart;
 import com.productms.model.Payment;
+import com.productms.model.PaymentMethod;
 import com.productms.util.Money;
 import com.productms.util.Settings;
 import java.awt.BorderLayout;
@@ -26,10 +28,13 @@ import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.JToggleButton;
 import javax.swing.SwingConstants;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 
 /**
- * Checkout payment screen: cash / card / bKash / Nagad / Rocket, split payments,
- * cash received with change, quick-cash note buttons and partial (due) payment.
+ * Checkout payment screen: configurable methods (cash, card, bKash, Nagad, Rocket, custom),
+ * reference validation, split payments, quick-cash note buttons from Settings, store credit from
+ * the customer's account, change calculation, partial (due) payment and an invoice note.
  */
 public class PaymentDialog extends JDialog {
 
@@ -44,12 +49,15 @@ public class PaymentDialog extends JDialog {
     private final JTextField txtAmount = new JTextField();
     private final JTextField txtRef = UiKit.field("Transaction ID");
     private final JLabel lblRef = new JLabel("Reference");
+    private final JLabel lblRefCheck = new JLabel(" ");
     private final JLabel lblPaid = big("0.00", 20f);
     private final JLabel lblRemaining = big("0.00", 20f);
     private final JLabel lblChange = big("0.00", 26f);
     private final JPanel quickCash = new JPanel(new GridLayout(2, 3, 6, 6));
+    private final JTextField txtNote = UiKit.field("Optional note printed on the invoice");
     private final JComboBox<String> cmbReceipt = new JComboBox<>(new String[]{
         "Thermal 80 mm", "Thermal 58 mm", "A4 invoice", "No receipt"});
+    private final JButton btnComplete = UiKit.big(UiKit.success("Complete sale (F9)"), 50);
     private String method = "CASH";
     private boolean confirmed;
 
@@ -60,15 +68,15 @@ public class PaymentDialog extends JDialog {
         this.due = cart.grandTotal.subtract(credit);
         UiKit.styleTable(table);
         table.setAutoCreateRowSorter(false);
+        txtNote.setText(cart.note == null ? "" : cart.note);
 
-        // ---- left: totals and payment lines
         JPanel totals = UiKit.card(new GridLayout(0, 2, 8, 6));
         totals.add(new JLabel("Customer"));
         totals.add(right(new JLabel(cart.customer.name)));
         totals.add(new JLabel("Invoice total"));
         totals.add(right(big(Money.fmt(cart.grandTotal), 20f)));
         if (credit.signum() > 0) {
-            totals.add(new JLabel("Store credit (" + cart.storeCreditRef + ")"));
+            totals.add(new JLabel("Exchange credit (" + cart.storeCreditRef + ")"));
             totals.add(right(big("-" + Money.fmt(Money.nz(cart.storeCredit)), 16f)));
         }
         totals.add(new JLabel("Amount to pay"));
@@ -91,24 +99,45 @@ public class PaymentDialog extends JDialog {
                 refresh();
             }
         });
+        JButton btnCredit = UiKit.plain("Use account credit");
+        BigDecimal balance = Money.nz(cart.customer.storeCredit);
+        btnCredit.setVisible(!cart.customer.walkIn && balance.signum() > 0);
+        btnCredit.setToolTipText("Customer's store credit balance: " + Money.cur(balance));
+        btnCredit.addActionListener(e -> {
+            BigDecimal used = BigDecimal.ZERO;
+            for (Payment p : lines) {
+                if ("STORE_CREDIT".equals(p.method)) {
+                    used = used.add(p.amount);
+                }
+            }
+            BigDecimal take = Money.min(balance.subtract(used), remaining());
+            if (take.signum() > 0) {
+                lines.add(new Payment("STORE_CREDIT", take, "ACCOUNT"));
+                refresh();
+            }
+        });
         JPanel left = new JPanel(new BorderLayout(0, 10));
         left.add(totals, BorderLayout.NORTH);
         left.add(UiKit.tableCard(table));
-        left.add(UiKit.row(btnRemove), BorderLayout.SOUTH);
+        left.add(UiKit.row(btnRemove, btnCredit), BorderLayout.SOUTH);
 
-        // ---- right: method + amount entry
-        JPanel methods = new JPanel(new GridLayout(1, 5, 6, 0));
+        List<PaymentMethod> methods = PaymentMethodDAO.tenderMethods();
+        JPanel methodPanel = new JPanel(new GridLayout(0, Math.min(5, Math.max(1, methods.size())), 6, 6));
         ButtonGroup g = new ButtonGroup();
-        Color[] colors = {UiKit.SUCCESS, UiKit.PRIMARY, new Color(0xE2136E), new Color(0xF7941D), new Color(0x8C3494)};
-        for (int i = 0; i < Payment.METHODS.length; i++) {
-            String m = Payment.METHODS[i];
-            JToggleButton b = new JToggleButton(Payment.label(m), m.equals("CASH"));
+        for (PaymentMethod m : methods) {
+            JToggleButton b = new JToggleButton(m.name, m.isCash());
             b.setFont(b.getFont().deriveFont(Font.BOLD, 14f));
-            b.setPreferredSize(new Dimension(90, 48));
-            b.setForeground(colors[i]);
-            b.addActionListener(e -> selectMethod(m));
+            b.setPreferredSize(new Dimension(90, 46));
+            if (m.color != null) {
+                try {
+                    b.setForeground(Color.decode(m.color));
+                } catch (NumberFormatException ignored) {
+                    // default colour
+                }
+            }
+            b.addActionListener(e -> selectMethod(m.code));
             g.add(b);
-            methods.add(b);
+            methodPanel.add(b);
         }
         txtAmount.setFont(txtAmount.getFont().deriveFont(Font.BOLD, 28f));
         txtAmount.setHorizontalAlignment(SwingConstants.RIGHT);
@@ -117,27 +146,42 @@ public class PaymentDialog extends JDialog {
         btnAdd.addActionListener(e -> addLine());
         txtAmount.addActionListener(e -> addOrComplete());
         txtRef.addActionListener(e -> addLine());
+        txtRef.getDocument().addDocumentListener(new DocumentListener() {
+            public void insertUpdate(DocumentEvent e) {
+                checkRef();
+            }
+
+            public void removeUpdate(DocumentEvent e) {
+                checkRef();
+            }
+
+            public void changedUpdate(DocumentEvent e) {
+                checkRef();
+            }
+        });
+        lblRefCheck.setFont(lblRefCheck.getFont().deriveFont(11.5f));
 
         UiKit.Form f = new UiKit.Form();
         f.section("Payment method");
-        f.full(methods);
+        f.full(methodPanel);
         f.section("Amount");
         f.full(txtAmount);
         f.add("", lblRef);
         f.full(txtRef);
+        f.full(lblRefCheck);
         f.full(quickCash);
         f.full(btnAdd);
-        f.section("Receipt");
-        f.add("Print", cmbReceipt);
+        f.section("Invoice");
+        f.add("Note", txtNote);
+        f.add("Receipt", cmbReceipt);
         String size = Settings.get("receipt_size", "80");
         cmbReceipt.setSelectedIndex("58".equals(size) ? 1 : "A4".equalsIgnoreCase(size) ? 2 : 0);
         f.filler();
         JPanel rightPanel = UiKit.card(new BorderLayout());
         rightPanel.add(f.panel);
-        rightPanel.setPreferredSize(new Dimension(470, 0));
+        rightPanel.setPreferredSize(new Dimension(500, 0));
 
         JButton btnCancel = UiKit.big(UiKit.plain("Back to cart (Esc)"), 50);
-        JButton btnComplete = UiKit.big(UiKit.success("Complete sale (F9)"), 50);
         btnCancel.addActionListener(e -> dispose());
         btnComplete.addActionListener(e -> complete());
 
@@ -153,7 +197,7 @@ public class PaymentDialog extends JDialog {
         UiKit.bind(root, "ESCAPE", this::dispose);
         UiKit.bind(root, "F9", this::complete);
         UiKit.bind(root, "ctrl ENTER", this::complete);
-        setSize(1000, 660);
+        setSize(1040, 700);
         setLocationRelativeTo(owner);
         selectMethod("CASH");
         refresh();
@@ -182,18 +226,35 @@ public class PaymentDialog extends JDialog {
         return Money.max(BigDecimal.ZERO, due.subtract(paid()));
     }
 
-    private void selectMethod(String m) {
-        method = m;
-        boolean cash = "CASH".equals(m);
-        txtRef.setEnabled(!cash);
-        lblRef.setText(cash ? "No reference needed for cash" : "CARD".equals(m) ? "Card last 4 digits / approval code *"
-                : Payment.label(m) + " transaction ID (TrxID) *");
-        txtRef.putClientProperty("JTextField.placeholderText", "CARD".equals(m) ? "e.g. 4821" : "e.g. 9KX7Q2LM1P");
+    private boolean isCash(String code) {
+        PaymentMethod m = PaymentMethodDAO.get(code);
+        return m != null && m.isCash();
+    }
+
+    private void selectMethod(String code) {
+        method = code;
+        PaymentMethod m = PaymentMethodDAO.get(code);
+        boolean cash = m != null && m.isCash();
+        boolean needsRef = m != null && m.requiresReference;
+        txtRef.setEnabled(needsRef);
+        lblRef.setText(cash ? "No reference needed for cash" : needsRef ? m.name + " reference *" : m.name + " (no reference)");
+        txtRef.putClientProperty("JTextField.placeholderText", m == null || m.referenceHint == null ? "Reference" : m.referenceHint);
         txtRef.setText("");
+        lblRefCheck.setText(m != null && m.referenceHint != null ? m.referenceHint : " ");
+        lblRefCheck.setForeground(UiKit.muted());
         txtAmount.setText(remaining().signum() > 0 ? remaining().toPlainString() : "");
         quickCash.setVisible(cash);
         txtAmount.requestFocusInWindow();
         txtAmount.selectAll();
+    }
+
+    private void checkRef() {
+        if (txtRef.getText().isBlank()) {
+            return;
+        }
+        String err = PaymentMethodDAO.validateReference(method, txtRef.getText());
+        lblRefCheck.setText(err == null ? "Reference format OK" : err);
+        lblRefCheck.setForeground(err == null ? UiKit.SUCCESS : UiKit.DANGER);
     }
 
     private void buildQuickCash() {
@@ -201,14 +262,20 @@ public class PaymentDialog extends JDialog {
         BigDecimal rem = remaining();
         TreeSet<BigDecimal> opts = new TreeSet<>();
         opts.add(rem);
-        for (int note : new int[]{10, 50, 100, 500, 1000}) {
-            BigDecimal n = BigDecimal.valueOf(note);
-            BigDecimal up = rem.divide(n, 0, RoundingMode.CEILING).multiply(n);
-            if (up.compareTo(rem) >= 0 && up.signum() > 0) {
-                opts.add(up);
+        for (String s : Settings.get("cash_denominations", "1000,500,100,50,10").split(",")) {
+            try {
+                BigDecimal n = new BigDecimal(s.trim());
+                if (n.compareTo(new BigDecimal("50")) < 0) {
+                    continue;
+                }
+                BigDecimal up = rem.divide(n, 0, RoundingMode.CEILING).multiply(n);
+                if (up.compareTo(rem) >= 0 && up.signum() > 0) {
+                    opts.add(up);
+                }
+            } catch (NumberFormatException ignored) {
+                // skip bad entry
             }
         }
-        opts.add(BigDecimal.valueOf(1000).max(rem.divide(BigDecimal.valueOf(1000), 0, RoundingMode.CEILING).multiply(BigDecimal.valueOf(1000))));
         int count = 0;
         for (BigDecimal v : opts) {
             if (count++ >= 6 || v.signum() <= 0) {
@@ -243,16 +310,21 @@ public class PaymentDialog extends JDialog {
                 return;
             }
             amt = Money.r2(amt);
-            if (!"CASH".equals(method)) {
-                if (txtRef.getText().isBlank()) {
-                    UiKit.warn(this, lblRef.getText().replace(" *", "") + " is required.");
+            if (!isCash(method)) {
+                String err = PaymentMethodDAO.validateReference(method, txtRef.getText());
+                if (err != null) {
+                    UiKit.warn(this, err);
                     txtRef.requestFocusInWindow();
                     return;
                 }
                 BigDecimal nonCash = BigDecimal.ZERO;
                 for (Payment p : lines) {
-                    if (!"CASH".equals(p.method)) {
+                    if (!isCash(p.method)) {
                         nonCash = nonCash.add(p.amount);
+                    }
+                    if (p.method.equals(method) && p.reference != null && p.reference.equalsIgnoreCase(txtRef.getText().trim())) {
+                        UiKit.warn(this, "This reference is already in the payment list.");
+                        return;
                     }
                 }
                 if (nonCash.add(amt).compareTo(due) > 0) {
@@ -261,25 +333,23 @@ public class PaymentDialog extends JDialog {
                     return;
                 }
             }
-            lines.add(new Payment(method, amt, "CASH".equals(method) ? null : txtRef.getText().trim()));
+            String ref = txtRef.getText().isBlank() ? null : txtRef.getText().trim().toUpperCase();
+            lines.add(new Payment(method, amt, isCash(method) ? null : ref));
             refresh();
-            if (remaining().signum() > 0 && !"CASH".equals(method)) {
-                txtRef.setText("");
-            }
+            txtRef.setText("");
         });
     }
 
     private void refresh() {
         model.setRows(lines);
-        BigDecimal paid = paid();
-        lblPaid.setText(Money.fmt(paid));
         BigDecimal rem = remaining();
+        lblPaid.setText(Money.fmt(paid()));
         lblRemaining.setText(Money.fmt(rem));
         lblRemaining.setForeground(rem.signum() > 0 ? UiKit.DANGER : UiKit.SUCCESS);
         BigDecimal cash = BigDecimal.ZERO;
         BigDecimal nonCash = BigDecimal.ZERO;
         for (Payment p : lines) {
-            if ("CASH".equals(p.method)) {
+            if (isCash(p.method)) {
                 cash = cash.add(p.amount);
             } else {
                 nonCash = nonCash.add(p.amount);
@@ -287,7 +357,10 @@ public class PaymentDialog extends JDialog {
         }
         BigDecimal change = Money.max(BigDecimal.ZERO, cash.subtract(Money.max(BigDecimal.ZERO, due.subtract(nonCash))));
         BigDecimal leftoverCredit = Money.nz(cart.storeCredit).subtract(Money.min(Money.nz(cart.storeCredit), cart.grandTotal));
-        lblChange.setText(Money.fmt(change.add(leftoverCredit)));
+        if ("CASH".equals(Settings.get("exchange_excess_policy", "ACCOUNT"))) {
+            change = change.add(leftoverCredit);
+        }
+        lblChange.setText(Money.fmt(change));
         txtAmount.setText(rem.signum() > 0 ? rem.toPlainString() : "");
         txtAmount.selectAll();
         buildQuickCash();
@@ -295,6 +368,9 @@ public class PaymentDialog extends JDialog {
     }
 
     private void complete() {
+        if (!btnComplete.isEnabled()) {
+            return;
+        }
         if (!txtAmount.getText().isBlank() && lines.isEmpty() && due.signum() > 0) {
             addLine();
             if (lines.isEmpty()) {
@@ -312,6 +388,8 @@ public class PaymentDialog extends JDialog {
                 return;
             }
         }
+        btnComplete.setEnabled(false);
+        cart.note = txtNote.getText().isBlank() ? null : txtNote.getText().trim();
         confirmed = true;
         dispose();
     }
@@ -322,6 +400,10 @@ public class PaymentDialog extends JDialog {
 
     public List<Payment> payments() {
         return lines;
+    }
+
+    public boolean hasCash() {
+        return lines.stream().anyMatch(p -> isCash(p.method));
     }
 
     /** "80", "58", "A4" or null for no receipt. */

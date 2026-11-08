@@ -3,21 +3,24 @@
 -- Run after schema.sql
 --   Admin   : admin   / admin123
 --   Cashier : cashier / cashier123
+--   Both demo accounts MUST change their password at first login.
+--   The SHA-256 hashes below are upgraded to bcrypt by the app at login.
+--   Run this only on a new, empty database (fresh install).
 -- =====================================================================
-USE ProductMSEasirArafat;
+USE ProductMSJibon;
 
 -- ---------------------------------------------------------------------
 -- Users
 -- ---------------------------------------------------------------------
-INSERT INTO users (user_id, username, password_hash, full_name, role) VALUES
- (1, 'admin',   SHA2('admin123', 256),   'System Administrator', 'ADMIN'),
- (2, 'cashier', SHA2('cashier123', 256), 'Front Desk Cashier',   'CASHIER');
+INSERT INTO users (user_id, username, password_hash, full_name, role, must_change_password, max_sale_amount) VALUES
+ (1, 'admin',   SHA2('admin123', 256),   'System Administrator', 'ADMIN',   1, NULL),
+ (2, 'cashier', SHA2('cashier123', 256), 'Front Desk Cashier',   'CASHIER', 1, 50000);
 
 -- ---------------------------------------------------------------------
 -- Shop settings
 -- ---------------------------------------------------------------------
 INSERT INTO settings (setting_key, setting_value) VALUES
- ('shop_name',          'Easir Arafat Super Shop'),
+ ('shop_name',          'Jibon Super Shop'),
  ('shop_address',       'House 12, Road 5, Dhanmondi, Dhaka 1205'),
  ('shop_phone',         '01700-000000'),
  ('shop_vat_reg',       'BIN 000123456-0101'),
@@ -29,7 +32,43 @@ INSERT INTO settings (setting_key, setting_value) VALUES
  ('return_days',        '7'),
  ('require_shift',      '1'),
  ('max_cashier_discount','10'),
- ('theme',              'light');
+ ('theme',              'light'),
+ -- numbering
+ ('invoice_prefix',         'INV'),
+ ('return_prefix',          'RET'),
+ ('cancel_prefix',          'CXL'),
+ ('number_format',          '{PREFIX}-{YYMMDD}-{SEQ:4}'),
+ ('number_reset',           'DAILY'),
+ -- POS limits & policies
+ ('max_carts',              '8'),
+ ('held_cart_expiry_hours', '24'),
+ ('reserve_held_stock',     '1'),
+ ('max_line_discount_percent','50'),
+ ('max_cart_discount_percent','30'),
+ ('max_cart_discount_amount','5000'),
+ ('refund_approval_amount', '2000'),
+ ('exchange_excess_policy', 'ACCOUNT'),
+ ('cash_denominations',     '1000,500,200,100,50,20,10,5,2,1'),
+ ('pos_tile_sort',          'NAME'),
+ ('scale_barcode_prefix',   '21'),
+ ('offline_mode_enabled',   '1'),
+ -- printing & hardware
+ ('auto_print_receipt',     '0'),
+ ('receipt_printer',        ''),
+ ('a4_printer',             ''),
+ ('cash_drawer_enabled',    '0'),
+ ('customer_display',       '0'),
+ -- inventory
+ ('adjustment_approval_value','5000'),
+ ('near_expiry_warn_days',  '7'),
+ ('near_expiry_block_days', '0'),
+ ('sku_format',             '{NAME}-{SEQ:5}'),
+ ('barcode_type',           'EAN13'),
+ -- security & backups
+ ('lockout_attempts',       '5'),
+ ('lockout_minutes',        '15'),
+ ('auto_backup_enabled',    '1'),
+ ('backup_keep',            '14');
 
 -- ---------------------------------------------------------------------
 -- Units, categories, brands, suppliers, customers
@@ -148,3 +187,65 @@ INSERT INTO stock_movements (variant_id, batch_id, movement_type, quantity, bala
  (13, NULL, 'OPENING', 3,   3,   17500.00,'OPENING', 'Opening stock (3 IMEI)', 1),
  (14, NULL, 'OPENING', 1,   1,   17500.00,'OPENING', 'Opening stock (1 IMEI)', 1),
  (17, NULL, 'OPENING', 3,   3,   90.00,   'OPENING', 'Opening stock', 1);
+
+-- ---------------------------------------------------------------------
+-- Payment methods (add more in Settings -> Payment Methods)
+-- ---------------------------------------------------------------------
+INSERT INTO payment_methods (code, name, kind, requires_reference, reference_regex, reference_hint, color, sort_order) VALUES
+ ('CASH',         'Cash',         'CASH',   0, NULL,                       NULL,                               '#16A34A', 1),
+ ('CARD',         'Card',         'CARD',   1, '^([0-9]{4}|[A-Z0-9]{6})$', 'Last 4 digits or 6-char approval',  '#2563EB', 2),
+ ('BKASH',        'bKash',        'MOBILE', 1, '^[A-Z0-9]{10}$',           'TrxID: 10 letters/digits',          '#E2136E', 3),
+ ('NAGAD',        'Nagad',        'MOBILE', 1, '^[A-Z0-9]{8,12}$',         'TxnID: 8-12 letters/digits',        '#F7941D', 4),
+ ('ROCKET',       'Rocket',       'MOBILE', 1, '^[0-9]{8,12}$',            'TxnID: 8-12 digits',                '#8C3494', 5),
+ ('STORE_CREDIT', 'Store Credit', 'CREDIT', 0, NULL,                       NULL,                               '#7C3AED', 99);
+
+-- ---------------------------------------------------------------------
+-- Label templates (Products -> Print Labels)
+-- ---------------------------------------------------------------------
+INSERT INTO label_templates (name, width_mm, height_mm, cols, rows_count, roll, show_shop, show_name, show_price, show_mrp, show_sku, show_qr) VALUES
+ ('A4 sheet 38x21 (65)',  38,   21.2, 5, 13, 0, 1, 1, 1, 0, 0, 0),
+ ('A4 sheet 64x34 (24)',  63.5, 33.9, 3, 8,  0, 1, 1, 1, 1, 0, 1),
+ ('Roll 50x25',           50,   25,   1, 1,  1, 1, 1, 1, 0, 0, 0),
+ ('Roll 40x30 with MRP',  40,   30,   1, 1,  1, 0, 1, 1, 1, 1, 0);
+
+-- ---------------------------------------------------------------------
+-- Extra product data: MRP, minimum price, shelf location, reorder qty,
+-- warranty, tags, attributes, favourites, price tiers, packs, scale PLU
+-- ---------------------------------------------------------------------
+UPDATE product_variants SET mrp = retail_price WHERE variant_id IN (10, 11, 12, 17);
+UPDATE product_variants SET min_price = ROUND(purchase_price * 1.05, 2) WHERE purchase_price > 0;
+UPDATE product_variants SET reorder_qty = GREATEST(reorder_level * 2, 10);
+UPDATE product_variants SET location = 'A1-01' WHERE product_id IN (1, 2, 10);
+UPDATE product_variants SET location = 'A1-02' WHERE product_id = 3;
+UPDATE product_variants SET location = 'B2-04' WHERE product_id = 4;
+UPDATE product_variants SET location = 'C1-01' WHERE product_id IN (5, 6, 7);
+UPDATE product_variants SET location = 'D1-01' WHERE product_id = 8;
+UPDATE product_variants SET location = 'E1-03' WHERE product_id IN (9, 11);
+UPDATE product_variants SET is_favourite = 1, pos_order = variant_id WHERE variant_id IN (1, 10, 11, 12);
+UPDATE product_variants SET plu = '00010' WHERE variant_id = 10;
+UPDATE product_variants SET extra_attributes = 'Material=100% Cotton; Fit=Regular' WHERE product_id = 4;
+
+UPDATE products SET warranty_months = 12, tags = 'phone,android,warranty',
+       attributes = CONCAT('Display: 6.5 inch', CHAR(10), 'Battery: 5000 mAh', CHAR(10), 'Origin: Vietnam') WHERE product_id = 8;
+UPDATE products SET warranty_months = 6, tags = 'computer,wireless' WHERE product_id IN (1, 2, 10);
+UPDATE products SET tags = 'fresh,daily' WHERE product_id IN (6, 7);
+UPDATE products SET tags = 'staple,loose' WHERE product_id = 5;
+UPDATE products SET tags = 'combo,offer' WHERE product_id = 10;
+UPDATE products SET discount_start = CURDATE() - INTERVAL 3 DAY, discount_end = CURDATE() + INTERVAL 30 DAY WHERE product_id = 4;
+
+-- Quantity price tiers (rice: 25+ kg 76, 50+ kg 74, 100+ kg 72)
+INSERT INTO price_tiers (variant_id, min_qty, price) VALUES
+ (10, 25, 76.00), (10, 50, 74.00), (10, 100, 72.00),
+ (4,  20, 520.00), (4, 50, 500.00);
+
+-- Packs / unit conversion: a case of 24 cans, a carton of 10 pen boxes
+INSERT INTO variant_packs (variant_id, name, quantity, barcode, price) VALUES
+ (12, 'CASE',   24, '2000000000190', 660.00),
+ (17, 'CARTON', 10, NULL,            1150.00);
+
+-- An extra (manufacturer) barcode that also scans as the black mouse
+INSERT INTO variant_barcodes (barcode, variant_id, note) VALUES ('097855066497', 1, 'Manufacturer UPC-A');
+
+-- Customer credit limits, payment terms and notes
+UPDATE customers SET credit_limit = 100000, payment_terms_days = 30, notes = 'Wholesale buyer. Pays every Thursday.' WHERE customer_id = 2;
+UPDATE customers SET credit_limit = 5000, payment_terms_days = 15, notes = 'Prefers bKash payment.' WHERE customer_id = 3;

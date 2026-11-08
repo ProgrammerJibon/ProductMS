@@ -424,13 +424,14 @@ public final class UiKit {
 
     public static Color statusColor(String s) {
         switch (s) {
-            case "PAID": case "COMPLETED": case "ACTIVE": case "IN STOCK": case "OPEN": case "OK": case "IN_STOCK":
+            case "PAID": case "COMPLETED": case "APPROVED": case "IN WARRANTY": case "CREATE": case "APPLIED": case "ACTIVE": case "IN STOCK": case "OPEN": case "OK": case "IN_STOCK":
             case "STOCK_IN": case "RETURN": case "OPENING": case "ADJUSTMENT_IN": case "SALE_CANCEL":
                 return SUCCESS;
-            case "DUE": case "CANCELLED": case "OUT OF STOCK": case "EXPIRED": case "INACTIVE": case "DAMAGED":
+            case "DUE": case "CANCELLED": case "OUT OF STOCK": case "EXPIRED": case "INACTIVE": case "DAMAGED": case "DELETED": case "OVERDUE":
+            case "REJECTED": case "FAILED": case "WARRANTY EXPIRED": case "ERROR": case "CANCEL": case "LOCKED":
             case "ADJUSTMENT_OUT": case "STOCK_OUT":
                 return DANGER;
-            case "PARTIAL": case "LOW STOCK": case "EXPIRING": case "EXPIRING SOON": case "CLOSED": case "SOLD":
+            case "PARTIAL": case "LOW STOCK": case "PENDING": case "SUBMITTED": case "UPDATE": case "MANUAL": case "EXPIRING": case "EXPIRING SOON": case "CLOSED": case "SOLD":
             case "EXCHANGE": case "REFUND": case "DUE_ADJUST":
                 return WARNING;
             case "SALE":

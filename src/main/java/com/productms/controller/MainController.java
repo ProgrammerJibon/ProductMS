@@ -93,6 +93,45 @@ public class MainController {
             UiKit.info(frame, "Welcome, " + Session.user().fullName + "!\nOpen your cash shift before selling (Shifts → Open Shift).");
             navigate("Shifts");
         }
+        if (Session.isAdmin()) {
+            securityWarnings();
+        }
+    }
+
+    /** Tells admins about unsafe setup: root DB login, demo passwords, pending approvals, failed offline sales. */
+    private void securityWarnings() {
+        java.util.List<String> w = new java.util.ArrayList<>();
+        if (com.productms.db.Database.isInsecureRoot()) {
+            w.add("The database is used as MySQL 'root' with an EMPTY password. Create a restricted account in "
+                    + "Settings → Security & Backup and set a root password in MySQL.");
+        }
+        UiKit.guard(frame, () -> {
+            if (new com.productms.dao.UserDAO().defaultCredentialsInUse()) {
+                w.add("A demo password (admin123 / cashier123) is still in use. Reset it in Settings → Users & Permissions.");
+            }
+            int pending = com.productms.db.Jdbc.count("SELECT COUNT(*) FROM adjustment_requests WHERE status='PENDING'");
+            if (pending > 0) {
+                w.add(pending + " stock adjustment(s) wait for approval (Stock → Approvals).");
+            }
+        });
+        try {
+            long failed = com.productms.service.OfflineQueue.list().stream().filter(e -> "FAILED".equals(e.status)).count();
+            if (failed > 0) {
+                w.add(failed + " offline sale(s) could not be booked (POS → Offline queue).");
+            }
+        } catch (java.io.IOException ignored) {
+            // none
+        }
+        if (!w.isEmpty()) {
+            UiKit.warn(frame, "Please check:\n\n• " + String.join("\n\n• ", w));
+        }
+    }
+
+    /** Signs out without questions (after a database restore). */
+    public void forceLogout() {
+        Session.clear();
+        frame.dispose();
+        new LoginController().start();
     }
 
     public void navigate(String name) {
@@ -181,6 +220,7 @@ public class MainController {
         if (!UiKit.confirm(frame, "Log out?")) {
             return;
         }
+        com.productms.service.AuditService.log("LOGOUT", "USER", Session.userId(), "Signed out", null);
         Session.clear();
         frame.dispose();
         new LoginController().start();

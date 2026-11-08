@@ -30,6 +30,7 @@ public class StockController implements Module {
     private final InventoryService inventory = new InventoryService();
     private final MasterDataDAO master = new MasterDataDAO();
     private final MainController main;
+    private final com.productms.service.StockCountService counts = new com.productms.service.StockCountService();
     private Variant inVariant;
     private Variant adjVariant;
 
@@ -74,6 +75,25 @@ public class StockController implements Module {
         view.srSearch.getDocument().addDocumentListener(restart(sr));
 
         view.tabs.addChangeListener(e -> UiKit.guard(view, this::loadTab));
+        view.dmDispose.addActionListener(e -> damagedAction(false));
+        view.dmRestore.addActionListener(e -> damagedAction(true));
+        view.scNew.addActionListener(e -> newCount());
+        view.scSubmit.addActionListener(e -> countAction("SUBMIT"));
+        view.scApprove.addActionListener(e -> countAction("APPROVE"));
+        view.scCancel.addActionListener(e -> countAction("CANCEL"));
+        view.scSheet.addActionListener(e -> com.productms.view.TableExport.print(view, view.sciTable, "Stock count sheet"));
+        view.scScan.addActionListener(e -> scanCount());
+        view.scSetQty.addActionListener(e -> setCountQty());
+        view.scShow.addActionListener(e -> loadCountItems());
+        view.scTable.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                loadCountItems();
+            }
+        });
+        view.apFilter.addActionListener(e -> UiKit.guard(view, () ->
+                view.apModel.setData(inventory.adjustmentRequests(view.apFilter.getSelectedIndex() == 0))));
+        view.apApprove.addActionListener(e -> decide(true));
+        view.apReject.addActionListener(e -> decide(false));
         setInVariant(null);
         setAdjVariant(null);
     }
@@ -127,6 +147,15 @@ public class StockController implements Module {
                 loadBatches();
                 break;
             case 4:
+                loadDamaged();
+                break;
+            case 5:
+                loadCounts();
+                break;
+            case 6:
+                view.apModel.setData(inventory.adjustmentRequests(view.apFilter.getSelectedIndex() == 0));
+                break;
+            case 7:
                 view.srModel.setData(products.serialLookup(view.srSearch.getText()));
                 break;
             default:
@@ -146,10 +175,11 @@ public class StockController implements Module {
         if (code == null || code.isBlank()) {
             return null;
         }
-        Variant v = products.findByCode(code);
-        if (v == null) {
+        ProductDAO.CodeMatch m = products.findByCode(code);
+        if (m == null) {
             throw new AppException("No product with barcode / SKU \"" + code.trim() + "\".");
         }
+        Variant v = m.variant;
         if (v.isBundle()) {
             throw new AppException(v.productName + " is a combo. Receive stock for its components instead.");
         }
@@ -175,6 +205,13 @@ public class StockController implements Module {
                 + "  ·  avg cost " + Money.cur(v.purchasePrice) + (batch ? "  ·  batch tracked" : "")
                 + (serial ? "  ·  serial tracked" : ""));
         view.inCost.setText(v.purchasePrice.toPlainString());
+        view.inPack.removeAllItems();
+        view.inPack.addItem(v.unitShort);
+        UiKit.guard(view, () -> {
+            for (Object[] pk : products.packs(v.variantId)) {
+                view.inPack.addItem(pk[0] + " (" + Money.qty((BigDecimal) pk[1]) + " " + v.unitShort + ")");
+            }
+        });
         view.inQty.requestFocusInWindow();
         view.revalidate();
     }
@@ -197,6 +234,16 @@ public class StockController implements Module {
         in.variantId = inVariant.variantId;
         in.quantity = Money.parse(view.inQty.getText());
         in.unitCost = Money.parse(view.inCost.getText());
+        int packIndex = view.inPack.getSelectedIndex();
+        if (packIndex > 0 && in.quantity != null) {
+            BigDecimal perPack = (BigDecimal) products.packs(inVariant.variantId).get(packIndex - 1)[1];
+            if (in.unitCost != null && !UiKit.confirm(view, "Receiving " + Money.qty(in.quantity) + " pack(s) = "
+                    + Money.qty(in.quantity.multiply(perPack)) + " " + inVariant.unitShort + ".\nIs " + Money.cur(in.unitCost)
+                    + " the cost of ONE " + inVariant.unitShort + "? (No = it is the cost per pack)")) {
+                in.unitCost = in.unitCost.divide(perPack, 2, java.math.RoundingMode.HALF_UP);
+            }
+            in.quantity = in.quantity.multiply(perPack);
+        }
         Object s = view.inSupplier.getSelectedItem();
         in.supplierId = s instanceof Supplier ? ((Supplier) s).supplierId : null;
         in.referenceNo = view.inRef.getText();
@@ -288,13 +335,214 @@ public class StockController implements Module {
                 + (a.quantity == null ? "?" : Money.qty(a.quantity)) + "\n\nApply?")) {
             return;
         }
-        inventory.adjust(a);
+        Integer pending = inventory.adjust(a);
         view.adjQty.setText("");
         view.adjReason.setText("");
         view.adjCount.setText("");
         setAdjVariant(products.findVariant(adjVariant.variantId));
         main.refreshAlerts();
-        UiKit.info(view, "Stock updated.");
+        UiKit.info(view, pending == null ? "Stock updated." : "This adjustment is worth more than the approval limit.\n"
+                + "Request #" + pending + " is waiting for a manager in Stock \u2192 Approvals.");
+    }
+
+    // ------------------------------------------------------------------ damaged stock
+
+    private void loadDamaged() throws Exception {
+        view.dmModel.setData(inventory.damagedStock());
+        view.dmLogModel.setData(Jdbc.table("SELECT l.created_at AS `Date`, p.name AS `Product`, v.sku AS `SKU`, l.action AS `Action`, "
+                + "l.quantity AS `Qty`, l.unit_cost AS `Unit cost`, ROUND(ABS(l.quantity) * l.unit_cost, 2) AS `Value`, "
+                + "l.reference AS `Reference`, l.note AS `Note`, u.username AS `By` FROM damaged_stock_log l "
+                + "JOIN product_variants v ON v.variant_id = l.variant_id JOIN products p ON p.product_id = v.product_id "
+                + "LEFT JOIN users u ON u.user_id = l.user_id ORDER BY l.log_id DESC LIMIT 500"));
+    }
+
+    private void damagedAction(boolean restore) {
+        int r = view.dmTable.getSelectedRow();
+        if (r < 0) {
+            UiKit.warn(view, "Select a product in the damaged stock list.");
+            return;
+        }
+        int variantId = ((Number) view.dmModel.getValueAt(view.dmTable.convertRowIndexToModel(r), 0)).intValue();
+        String name = String.valueOf(view.dmModel.getValueAt(view.dmTable.convertRowIndexToModel(r), 1));
+        UiKit.guard(view, () -> {
+            String q = UiKit.input(view, (restore ? "Restore" : "Dispose") + " how many damaged unit(s) of " + name + "?",
+                    String.valueOf(view.dmModel.getValueAt(view.dmTable.convertRowIndexToModel(r), 3)));
+            if (q == null) {
+                return;
+            }
+            String note = UiKit.input(view, "Reason (e.g. thrown away, returned to supplier, repaired):", "");
+            if (note == null) {
+                return;
+            }
+            if (restore) {
+                inventory.restoreDamaged(variantId, Money.parse(q), note);
+            } else {
+                inventory.disposeDamaged(variantId, Money.parse(q), note);
+            }
+            loadDamaged();
+            main.refreshAlerts();
+        });
+    }
+
+    // ------------------------------------------------------------------ stock counts
+
+    private Integer selectedCount() {
+        int r = view.scTable.getSelectedRow();
+        return r < 0 ? null : ((Number) view.scModel.getValueAt(view.scTable.convertRowIndexToModel(r), 0)).intValue();
+    }
+
+    private String selectedCountStatus() {
+        int r = view.scTable.getSelectedRow();
+        return r < 0 ? null : String.valueOf(view.scModel.getValueAt(view.scTable.convertRowIndexToModel(r), 3));
+    }
+
+    private void loadCounts() throws Exception {
+        Integer keep = selectedCount();
+        view.scModel.setData(counts.counts());
+        if (keep != null) {
+            for (int i = 0; i < view.scTable.getRowCount(); i++) {
+                if (((Number) view.scModel.getValueAt(view.scTable.convertRowIndexToModel(i), 0)).intValue() == keep) {
+                    view.scTable.setRowSelectionInterval(i, i);
+                }
+            }
+        }
+        loadCountItems();
+    }
+
+    private void loadCountItems() {
+        Integer id = selectedCount();
+        UiKit.guard(view, () -> {
+            if (id == null) {
+                view.sciModel.setData(null);
+                view.scInfo.setText("Select a count, or start a new one.");
+                return;
+            }
+            view.sciModel.setData(counts.items(id, view.scShow.getSelectedIndex() == 1));
+            String st = selectedCountStatus();
+            view.scInfo.setText("Status: " + st + ("OPEN".equals(st) ? " - scan items or enter counted quantities" : ""));
+            boolean open = "OPEN".equals(st);
+            view.scScan.setEnabled(open);
+            view.scSetQty.setEnabled(open);
+            view.scSubmit.setEnabled(open);
+            view.scApprove.setEnabled("SUBMITTED".equals(st));
+        });
+    }
+
+    private void newCount() {
+        UiKit.guard(view, () -> {
+            javax.swing.JTextField name = UiKit.field("e.g. Month-end count November");
+            javax.swing.JComboBox<Object> cat = new javax.swing.JComboBox<>();
+            cat.addItem("Whole shop");
+            master.categories(true).forEach(cat::addItem);
+            UiKit.Form f = new UiKit.Form();
+            f.add("Name *", name);
+            f.add("Scope", cat);
+            f.full(UiKit.mutedLabel("System quantities are frozen now. Sales during the count are allowed for."));
+            if (javax.swing.JOptionPane.showConfirmDialog(view, f.panel, "New stock count", javax.swing.JOptionPane.OK_CANCEL_OPTION,
+                    javax.swing.JOptionPane.PLAIN_MESSAGE) != javax.swing.JOptionPane.OK_OPTION) {
+                return;
+            }
+            Object c = cat.getSelectedItem();
+            counts.start(name.getText(), c instanceof com.productms.model.Category ? ((com.productms.model.Category) c).categoryId : null);
+            loadCounts();
+            if (view.scTable.getRowCount() > 0) {
+                view.scTable.setRowSelectionInterval(0, 0);
+            }
+            view.scScan.requestFocusInWindow();
+        });
+    }
+
+    private void scanCount() {
+        Integer id = selectedCount();
+        String text = view.scScan.getText().trim();
+        if (id == null || text.isEmpty()) {
+            return;
+        }
+        UiKit.guard(view, () -> {
+            BigDecimal qty = null;
+            String code = text;
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(\\d+(?:\\.\\d+)?)\\s*[*xX]\\s*(.+)$").matcher(text);
+            if (m.matches()) {
+                qty = new BigDecimal(m.group(1));
+                code = m.group(2);
+            }
+            String result = counts.scan(id, code, qty);
+            view.scInfo.setText(result);
+            view.scScan.setText("");
+            view.sciModel.setData(counts.items(id, view.scShow.getSelectedIndex() == 1));
+        });
+    }
+
+    private void setCountQty() {
+        Integer id = selectedCount();
+        int r = view.sciTable.getSelectedRow();
+        if (id == null || r < 0) {
+            UiKit.warn(view, "Select an item of the count.");
+            return;
+        }
+        int variantId = ((Number) view.sciModel.getValueAt(view.sciTable.convertRowIndexToModel(r), 0)).intValue();
+        Object cur = view.sciModel.getValueAt(view.sciTable.convertRowIndexToModel(r), 6);
+        UiKit.guard(view, () -> {
+            String q = UiKit.input(view, "Counted quantity of " + view.sciModel.getValueAt(view.sciTable.convertRowIndexToModel(r), 1)
+                    + " (blank = not counted):", cur == null ? "" : Money.qty((BigDecimal) cur));
+            if (q == null) {
+                return;
+            }
+            counts.setCounted(id, variantId, Money.parse(q));
+            view.sciModel.setData(counts.items(id, view.scShow.getSelectedIndex() == 1));
+        });
+    }
+
+    private void countAction(String action) {
+        Integer id = selectedCount();
+        if (id == null) {
+            UiKit.warn(view, "Select a count.");
+            return;
+        }
+        UiKit.guard(view, () -> {
+            switch (action) {
+                case "SUBMIT":
+                    if (UiKit.confirm(view, "Submit this count? Counting stops and a manager reviews the differences.")) {
+                        counts.submit(id);
+                    }
+                    break;
+                case "APPROVE":
+                    view.scShow.setSelectedIndex(1);
+                    if (UiKit.confirm(view, "Book all differences of this count as stock adjustments?")) {
+                        UiKit.info(view, counts.approve(id));
+                        main.refreshAlerts();
+                    }
+                    break;
+                case "CANCEL":
+                    if (UiKit.confirm(view, "Cancel this count? Nothing is booked.")) {
+                        counts.cancel(id);
+                    }
+                    break;
+                default:
+                    break;
+            }
+            loadCounts();
+        });
+    }
+
+    // ------------------------------------------------------------------ approvals
+
+    private void decide(boolean approve) {
+        int r = view.apTable.getSelectedRow();
+        if (r < 0) {
+            UiKit.warn(view, "Select a request.");
+            return;
+        }
+        int id = ((Number) view.apModel.getValueAt(view.apTable.convertRowIndexToModel(r), 0)).intValue();
+        String note = UiKit.input(view, (approve ? "Approve" : "Reject") + " request #" + id + ". Note (optional):", "");
+        if (note == null) {
+            return;
+        }
+        UiKit.guard(view, () -> {
+            inventory.decide(id, approve, note.isBlank() ? null : note.trim());
+            view.apModel.setData(inventory.adjustmentRequests(view.apFilter.getSelectedIndex() == 0));
+            main.refreshAlerts();
+        });
     }
 
     // ------------------------------------------------------------------ lists

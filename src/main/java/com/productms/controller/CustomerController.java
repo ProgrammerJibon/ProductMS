@@ -49,6 +49,14 @@ public class CustomerController implements Module {
             }
         });
         view.chkDueOnly.addActionListener(e -> load());
+        view.chkOverdue.addActionListener(e -> load());
+        view.btnCredit.addActionListener(e -> {
+            Customer c = view.model.selected(view.table);
+            if (c != null) {
+                UiKit.guard(view, () -> com.productms.view.TableDialog.show(view, "Store credit - " + c.name + " (balance "
+                        + com.productms.util.Money.cur(c.storeCredit) + ")", dao.creditHistory(c.customerId)));
+            }
+        });
         view.btnNew.addActionListener(e -> edit(new Customer()));
         view.btnEdit.addActionListener(e -> {
             Customer c = view.model.selected(view.table);
@@ -96,6 +104,9 @@ public class CustomerController implements Module {
             if (view.chkDueOnly.isSelected()) {
                 list = list.stream().filter(c -> c.due.signum() > 0).collect(Collectors.toList());
             }
+            if (view.chkOverdue.isSelected()) {
+                list = list.stream().filter(c -> c.overdueInvoices > 0).collect(Collectors.toList());
+            }
             view.model.setRows(list);
         });
     }
@@ -111,6 +122,13 @@ public class CustomerController implements Module {
         JTextField address = UiKit.field("Optional");
         JComboBox<String> type = new JComboBox<>(new String[]{"RETAIL", "WHOLESALE"});
         JCheckBox active = new JCheckBox("Active", c.active);
+        JTextField limit = UiKit.field("blank = no limit, 0 = no credit");
+        limit.setText(c.creditLimit == null ? "" : c.creditLimit.toPlainString());
+        JTextField terms = UiKit.field("days");
+        terms.setText(String.valueOf(c.paymentTermsDays));
+        javax.swing.JTextArea notes = new javax.swing.JTextArea(3, 20);
+        notes.setLineWrap(true);
+        notes.setText(c.notes);
         name.setText(c.name);
         phone.setText(c.phone);
         email.setText(c.email);
@@ -122,6 +140,9 @@ public class CustomerController implements Module {
         f.add("Email", email);
         f.add("Address", address);
         f.add("Type", type);
+        f.add("Credit limit", limit);
+        f.add("Payment terms", terms);
+        f.add("Notes for cashier", new javax.swing.JScrollPane(notes));
         f.full(active);
         f.panel.setPreferredSize(new java.awt.Dimension(420, f.panel.getPreferredSize().height));
         while (JOptionPane.showConfirmDialog(view, f.panel, c.customerId == 0 ? "New customer" : "Edit customer",
@@ -132,8 +153,15 @@ public class CustomerController implements Module {
             c.address = address.getText();
             c.customerType = (String) type.getSelectedItem();
             c.active = active.isSelected();
+            c.notes = notes.getText();
             boolean[] ok = {false};
             UiKit.guard(view, () -> {
+                c.creditLimit = com.productms.util.Money.parse(limit.getText());
+                try {
+                    c.paymentTermsDays = Integer.parseInt(terms.getText().trim());
+                } catch (NumberFormatException e) {
+                    throw new com.productms.util.AppException("Payment terms must be a whole number of days.");
+                }
                 dao.save(c);
                 ok[0] = true;
             });

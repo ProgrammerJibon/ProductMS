@@ -23,8 +23,10 @@ public class ProductsView extends JPanel {
     public final JTextField txtSearch = UiKit.search("Search name, SKU, barcode, brand, size, colour...");
     public final JComboBox<Object> cmbCategory = new JComboBox<>();
     public final JComboBox<Object> cmbBrand = new JComboBox<>();
-    public final JComboBox<String> cmbStatus = new JComboBox<>(new String[]{"All status", "Active", "Inactive"});
-    public final JComboBox<String> cmbStock = new JComboBox<>(new String[]{"All stock", "In stock", "Low stock", "Out of stock"});
+    public final JComboBox<String> cmbStatus = new JComboBox<>(new String[]{"All status", "Active", "Inactive", "Deleted"});
+    public final JComboBox<String> cmbStock = new JComboBox<>(new String[]{"All stock", "In stock", "Low stock", "Out of stock", "Has damaged"});
+    public final JComboBox<String> cmbSort = new JComboBox<>(new String[]{"Sort: Name", "Sort: Price low-high", "Sort: Price high-low",
+        "Sort: Stock low-high", "Sort: Stock high-low", "Sort: Newest", "Sort: Best selling", "Sort: Shelf location"});
 
     public final JButton btnNew = UiKit.primary("+ New Product");
     public final JButton btnEdit = UiKit.plain("Edit");
@@ -35,6 +37,13 @@ public class ProductsView extends JPanel {
     public final JButton btnImport = UiKit.plain("Import CSV");
     public final JButton btnExport = UiKit.plain("Export CSV");
     public final JButton btnTemplate = UiKit.plain("CSV Template");
+    public final JButton btnClone = UiKit.plain("Clone");
+    public final JButton btnBulk = UiKit.plain("Bulk Edit");
+    public final JButton btnSchedule = UiKit.plain("Schedule Price");
+    public final JButton btnHistory = UiKit.plain("History");
+    public final JButton btnRestore = UiKit.plain("Restore");
+    public final JButton btnPrevImage = UiKit.plain("<");
+    public final JButton btnNextImage = UiKit.plain(">");
 
     public final RowTableModel<Variant> model = new RowTableModel<Variant>()
             .col("SKU", String.class, v -> v.sku)
@@ -60,6 +69,9 @@ public class ProductsView extends JPanel {
     public final JLabel imgQr = new JLabel("", SwingConstants.CENTER);
 
     public static String status(Variant v) {
+        if (v.deleted) {
+            return "DELETED";
+        }
         if (!v.isSellable()) {
             return "INACTIVE";
         }
@@ -76,12 +88,14 @@ public class ProductsView extends JPanel {
         for (int i = 0; i < widths.length; i++) {
             table.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
         }
-        txtSearch.setPreferredSize(new Dimension(320, 36));
+        txtSearch.setPreferredSize(new Dimension(300, 36));
         cmbCategory.setPreferredSize(new Dimension(200, 36));
         cmbBrand.setPreferredSize(new Dimension(150, 36));
 
-        JPanel filters = UiKit.row(txtSearch, cmbCategory, cmbBrand, cmbStatus, cmbStock);
-        JPanel actions = UiKit.row(btnNew, btnEdit, btnToggle, btnDelete, btnStockIn, btnLabels);
+        JPanel filters = UiKit.row(txtSearch, cmbCategory, cmbBrand, cmbStatus, cmbStock, cmbSort);
+        JPanel actions = UiKit.row(btnNew, btnEdit, btnClone, btnToggle, btnDelete, btnRestore, btnBulk, btnSchedule, btnHistory,
+                btnStockIn, btnLabels);
+        btnRestore.setVisible(false);
         JPanel io = UiKit.rowRight(btnImport, btnExport, btnTemplate);
         JPanel bar = new JPanel(new BorderLayout(0, 10));
         bar.setOpaque(false);
@@ -100,7 +114,11 @@ public class ProductsView extends JPanel {
         JPanel top = new JPanel(new BorderLayout(0, 8));
         top.setOpaque(false);
         top.add(imgProduct, BorderLayout.NORTH);
-        top.add(lblName, BorderLayout.SOUTH);
+        JPanel nameRow = new JPanel(new BorderLayout());
+        nameRow.setOpaque(false);
+        nameRow.add(lblName);
+        nameRow.add(UiKit.row(btnPrevImage, btnNextImage), BorderLayout.EAST);
+        top.add(nameRow, BorderLayout.SOUTH);
         detail.add(top, BorderLayout.NORTH);
         txtDetails.setEditable(false);
         txtDetails.setOpaque(false);

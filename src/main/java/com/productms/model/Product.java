@@ -1,6 +1,7 @@
 package com.productms.model;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -20,10 +21,22 @@ public class Product {
     public BigDecimal vatPercent = BigDecimal.ZERO;
     public String discountType = "NONE";
     public BigDecimal discountValue = BigDecimal.ZERO;
+    public LocalDate discountStart;
+    public LocalDate discountEnd;
     public String imagePath;
+    public String tags;
+    public String attributes;
+    public int warrantyMonths;
+    public String bundlePricing = "FIXED";
+    public BigDecimal bundleDiscountPercent = BigDecimal.ZERO;
     public boolean active = true;
+    public boolean deleted;
     public List<Variant> variants = new ArrayList<>();
     public List<BundleItem> bundleItems = new ArrayList<>();
+    /** Image file paths, first = primary. */
+    public List<String> images = new ArrayList<>();
+    /** Reason recorded in price history when prices change on save. */
+    public String priceChangeReason;
 
     public boolean isBundle() {
         return "BUNDLE".equals(productType);

@@ -41,12 +41,52 @@ public final class BarcodeUtil {
                 && ean13CheckDigit(code.substring(0, 12)) == code.charAt(12) - '0';
     }
 
-    /** EAN-13 when the code is a valid EAN-13, otherwise Code-128. */
+    /** GTIN check digit for EAN-8 / UPC-A / EAN-13 (weights 3,1 from the right). */
+    public static int gtinCheckDigit(String body) {
+        int sum = 0;
+        for (int i = 0; i < body.length(); i++) {
+            int d = body.charAt(body.length() - 1 - i) - '0';
+            sum += (i % 2 == 0) ? d * 3 : d;
+        }
+        return (10 - sum % 10) % 10;
+    }
+
+    public static boolean isValidGtin(String code) {
+        return code != null && code.matches("\\d{8}|\\d{12}|\\d{13}")
+                && gtinCheckDigit(code.substring(0, code.length() - 1)) == code.charAt(code.length() - 1) - '0';
+    }
+
+    /** "EAN-8", "UPC-A", "EAN-13" or "Code-128". */
+    public static String formatName(String code) {
+        if (isValidGtin(code)) {
+            return code.length() == 8 ? "EAN-8" : code.length() == 12 ? "UPC-A" : "EAN-13";
+        }
+        return "Code-128";
+    }
+
+    /**
+     * Error message when a numeric code looks like EAN-8 / UPC-A / EAN-13 but its check digit is
+     * wrong (a typo), otherwise null. Other codes are accepted and printed as Code-128.
+     */
+    public static String checkDigitError(String code) {
+        if (code != null && code.matches("\\d{8}|\\d{12}|\\d{13}") && !isValidGtin(code)) {
+            String body = code.substring(0, code.length() - 1);
+            return "wrong check digit for " + (code.length() == 8 ? "EAN-8" : code.length() == 12 ? "UPC-A" : "EAN-13")
+                    + " (should end in " + gtinCheckDigit(body) + "). Check for a typo.";
+        }
+        if (code != null && !code.matches("[\\x20-\\x7E]{1,48}")) {
+            return "barcodes may only contain plain letters, digits and symbols (max 48).";
+        }
+        return null;
+    }
+
+    /** EAN-8, UPC-A or EAN-13 when the code is a valid GTIN of that length, otherwise Code-128. */
     public static BitMatrix encodeBarcode(String code) {
         try {
             Map<EncodeHintType, Object> hints = new EnumMap<>(EncodeHintType.class);
             hints.put(EncodeHintType.MARGIN, 0);
-            BarcodeFormat format = isValidEan13(code) ? BarcodeFormat.EAN_13 : BarcodeFormat.CODE_128;
+            BarcodeFormat format = !isValidGtin(code) ? BarcodeFormat.CODE_128
+                    : code.length() == 8 ? BarcodeFormat.EAN_8 : code.length() == 12 ? BarcodeFormat.UPC_A : BarcodeFormat.EAN_13;
             return new MultiFormatWriter().encode(code, format, 0, 0, hints);
         } catch (WriterException | IllegalArgumentException e) {
             throw new AppException("Cannot encode barcode \"" + code + "\": " + e.getMessage());

@@ -16,6 +16,7 @@ public class Shift {
     public BigDecimal difference;
     public String status = "OPEN";
     public String note;
+    public String denominations;
 
     public boolean isOpen() {
         return "OPEN".equals(status);

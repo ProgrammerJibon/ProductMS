@@ -1,6 +1,9 @@
 package com.productms.service;
 
+import com.productms.dao.PaymentMethodDAO;
+import com.productms.db.Database;
 import com.productms.db.Jdbc;
+import com.productms.model.PaymentMethod;
 import com.productms.model.Shift;
 import com.productms.util.AppException;
 import com.productms.util.Money;
@@ -11,7 +14,12 @@ import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** Cashier shifts: opening float, cash expected at close, and the shift (Z) report. */
+/**
+ * Cashier shifts: opening float, cash in / out, safe drops, expected cash, denomination count,
+ * per-method reconciliation (expected vs declared) and the X / Z report.
+ * <p>
+ * Expected cash = opening + cash received − cash refunded + cash in − cash out − safe drops.
+ */
 public class ShiftService {
 
     private static Shift map(ResultSet rs) throws SQLException {
@@ -27,6 +35,7 @@ public class ShiftService {
         s.difference = rs.getBigDecimal("difference");
         s.status = rs.getString("status");
         s.note = rs.getString("note");
+        s.denominations = rs.getString("denominations");
         return s;
     }
 
@@ -48,9 +57,51 @@ public class ShiftService {
             throw new AppException("You already have an open shift.");
         }
         int id = Jdbc.insert("INSERT INTO shifts (user_id, opening_cash) VALUES (?,?)", Session.userId(), openingCash);
+        AuditService.log("OPEN_SHIFT", "SHIFT", id, "Opening cash " + Money.fmt(openingCash), null);
         Shift s = find(id);
         Session.setShift(s);
         return s;
+    }
+
+    // ------------------------------------------------------------------ cash in / out / safe drop
+
+    public void cashMovement(String type, BigDecimal amount, String reason) throws SQLException {
+        if (Session.shift() == null) {
+            throw new AppException("Open a shift first.");
+        }
+        if (!Money.pos(amount)) {
+            throw new AppException("Enter an amount greater than 0.");
+        }
+        if (reason == null || reason.isBlank()) {
+            throw new AppException("Enter a reason (e.g. change from bank, paid for tea, moved to safe).");
+        }
+        int shiftId = Session.shiftId();
+        if (!"CASH_IN".equals(type) && amount.compareTo(expectedCash(shiftId)) > 0) {
+            throw new AppException("The drawer should only hold " + Money.cur(expectedCash(shiftId)) + ".");
+        }
+        Jdbc.insert("INSERT INTO cash_movements (shift_id, user_id, type, amount, reason) VALUES (?,?,?,?,?)",
+                shiftId, Session.userId(), type, amount, reason.trim());
+        AuditService.log(type, "SHIFT", shiftId, Money.fmt(amount) + " - " + reason.trim(), null);
+    }
+
+    public Jdbc.TableData cashMovements(int shiftId) throws SQLException {
+        return Jdbc.table("SELECT m.created_at AS `Time`, m.type AS `Type`, m.amount AS `Amount`, m.reason AS `Reason`, "
+                + "u.username AS `By` FROM cash_movements m JOIN users u ON u.user_id = m.user_id WHERE m.shift_id = ? "
+                + "ORDER BY m.movement_id", shiftId);
+    }
+
+    // ------------------------------------------------------------------ totals
+
+    private static BigDecimal paid(int shiftId, String method) throws SQLException {
+        return Jdbc.decimal("SELECT COALESCE(SUM(amount),0) FROM payments WHERE shift_id=? AND method=?", shiftId, method);
+    }
+
+    private static BigDecimal refunded(int shiftId, String method) throws SQLException {
+        return Jdbc.decimal("SELECT COALESCE(SUM(amount),0) FROM refund_payments WHERE shift_id=? AND method=?", shiftId, method);
+    }
+
+    private static BigDecimal moved(int shiftId, String type) throws SQLException {
+        return Jdbc.decimal("SELECT COALESCE(SUM(amount),0) FROM cash_movements WHERE shift_id=? AND type=?", shiftId, type);
     }
 
     /** Totals for a shift, in display order. */
@@ -63,25 +114,43 @@ public class ShiftService {
         m.put("Discounts given", Jdbc.decimal("SELECT COALESCE(SUM(item_discount+cart_discount),0) FROM sales WHERE shift_id=? AND status='COMPLETED'", shiftId));
         m.put("VAT collected", Jdbc.decimal("SELECT COALESCE(SUM(vat_total),0) FROM sales WHERE shift_id=? AND status='COMPLETED'", shiftId));
         m.put("Sales on due", Jdbc.decimal("SELECT COALESCE(SUM(due_total),0) FROM sales WHERE shift_id=? AND status='COMPLETED'", shiftId));
-        for (String method : new String[]{"CASH", "CARD", "BKASH", "NAGAD", "ROCKET", "STORE_CREDIT"}) {
-            m.put("Received - " + com.productms.model.Payment.label(method),
-                    Jdbc.decimal("SELECT COALESCE(SUM(amount),0) FROM payments WHERE shift_id=? AND method=?", shiftId, method));
+        for (PaymentMethod pm : PaymentMethodDAO.tenderMethods()) {
+            m.put("Received - " + pm.name, paid(shiftId, pm.code));
         }
+        m.put("Received - Store credit", paid(shiftId, "STORE_CREDIT"));
         m.put("Due collected", Jdbc.decimal("SELECT COALESCE(SUM(amount),0) FROM payments WHERE shift_id=? AND payment_type='DUE_COLLECTION'", shiftId));
-        m.put("Refunds - Cash", Jdbc.decimal("SELECT COALESCE(SUM(refund_amount),0) FROM sales_returns WHERE shift_id=? AND refund_method='CASH'", shiftId));
-        m.put("Refunds - Other", Jdbc.decimal("SELECT COALESCE(SUM(refund_amount),0) FROM sales_returns WHERE shift_id=? AND refund_method NOT IN ('CASH','NONE')", shiftId));
+        m.put("Refunds - Cash", refunded(shiftId, "CASH"));
+        m.put("Refunds - Other", Jdbc.decimal("SELECT COALESCE(SUM(amount),0) FROM refund_payments WHERE shift_id=? AND method<>'CASH'", shiftId));
+        m.put("Cash in", moved(shiftId, "CASH_IN"));
+        m.put("Cash out (payouts)", moved(shiftId, "CASH_OUT"));
+        m.put("Safe drops", moved(shiftId, "SAFE_DROP"));
         m.put("Expected cash in drawer", expectedCash(shiftId));
         return m;
     }
 
     public BigDecimal expectedCash(int shiftId) throws SQLException {
         Shift s = find(shiftId);
-        BigDecimal cashIn = Jdbc.decimal("SELECT COALESCE(SUM(amount),0) FROM payments WHERE shift_id=? AND method='CASH'", shiftId);
-        BigDecimal cashOut = Jdbc.decimal("SELECT COALESCE(SUM(refund_amount),0) FROM sales_returns WHERE shift_id=? AND refund_method='CASH'", shiftId);
-        return Money.r2(s.openingCash.add(cashIn).subtract(cashOut));
+        return Money.r2(s.openingCash.add(paid(shiftId, "CASH")).subtract(refunded(shiftId, "CASH"))
+                .add(moved(shiftId, "CASH_IN")).subtract(moved(shiftId, "CASH_OUT")).subtract(moved(shiftId, "SAFE_DROP")));
     }
 
-    public Shift close(int shiftId, BigDecimal counted, String note) throws SQLException {
+    /** Expected amount per non-cash method (received − refunded) for reconciliation. */
+    public Map<String, BigDecimal> expectedByMethod(int shiftId) throws SQLException {
+        Map<String, BigDecimal> m = new LinkedHashMap<>();
+        for (PaymentMethod pm : PaymentMethodDAO.tenderMethods()) {
+            if (!pm.isCash()) {
+                m.put(pm.code, paid(shiftId, pm.code).subtract(refunded(shiftId, pm.code)));
+            }
+        }
+        return m;
+    }
+
+    /**
+     * Closes the shift with the counted cash (and its denominations) and the totals the cashier
+     * declares for each card / mobile method (from terminal slips and phone statements).
+     */
+    public Shift close(int shiftId, BigDecimal counted, String denominations, Map<String, BigDecimal> declared, String note)
+            throws SQLException {
         if (counted == null || counted.signum() < 0) {
             throw new AppException("Enter the cash counted in the drawer.");
         }
@@ -93,12 +162,31 @@ public class ShiftService {
             throw new AppException("You can only close your own shift.");
         }
         BigDecimal expected = expectedCash(shiftId);
-        Jdbc.update("UPDATE shifts SET closed_at=NOW(), expected_cash=?, counted_cash=?, difference=?, status='CLOSED', note=? "
-                + "WHERE shift_id=?", expected, counted, counted.subtract(expected), note, shiftId);
+        Map<String, BigDecimal> exp = expectedByMethod(shiftId);
+        Database.inTransaction(con -> {
+            Jdbc.update(con, "UPDATE shifts SET closed_at=NOW(), expected_cash=?, counted_cash=?, difference=?, denominations=?, "
+                    + "status='CLOSED', note=? WHERE shift_id=?", expected, counted, counted.subtract(expected), denominations, note, shiftId);
+            Jdbc.update(con, "DELETE FROM shift_reconciliation WHERE shift_id=?", shiftId);
+            Jdbc.insert(con, "INSERT INTO shift_reconciliation (shift_id, method, expected, declared, difference) VALUES (?,?,?,?,?)",
+                    shiftId, "CASH", expected, counted, counted.subtract(expected));
+            for (Map.Entry<String, BigDecimal> e : exp.entrySet()) {
+                BigDecimal d = declared == null || declared.get(e.getKey()) == null ? e.getValue() : declared.get(e.getKey());
+                Jdbc.insert(con, "INSERT INTO shift_reconciliation (shift_id, method, expected, declared, difference) VALUES (?,?,?,?,?)",
+                        shiftId, e.getKey(), e.getValue(), d, d.subtract(e.getValue()));
+            }
+            AuditService.log(con, "CLOSE_SHIFT", "SHIFT", shiftId, "Expected " + Money.fmt(expected) + ", counted " + Money.fmt(counted)
+                    + (note == null ? "" : " - " + note));
+            return null;
+        });
         if (Session.shiftId() != null && Session.shiftId() == shiftId) {
             Session.setShift(null);
         }
         return find(shiftId);
+    }
+
+    public Jdbc.TableData reconciliation(int shiftId) throws SQLException {
+        return Jdbc.table("SELECT method AS `Method`, expected AS `Expected`, declared AS `Declared / counted`, difference AS `Difference` "
+                + "FROM shift_reconciliation WHERE shift_id = ? ORDER BY method = 'CASH' DESC, method", shiftId);
     }
 
     public Jdbc.TableData history() throws SQLException {
@@ -107,6 +195,7 @@ public class ShiftService {
                 + "s.difference AS `Over/Short`, s.status AS `Status`, "
                 + "(SELECT COUNT(*) FROM sales x WHERE x.shift_id=s.shift_id AND x.status='COMPLETED') AS `Invoices`, "
                 + "(SELECT COALESCE(SUM(grand_total),0) FROM sales x WHERE x.shift_id=s.shift_id AND x.status='COMPLETED') AS `Sales`, "
-                + "s.note AS `Note` FROM shifts s JOIN users u ON u.user_id=s.user_id ORDER BY s.shift_id DESC LIMIT 500");
+                + "(SELECT COALESCE(SUM(ABS(difference)),0) FROM shift_reconciliation r WHERE r.shift_id=s.shift_id AND r.method<>'CASH') "
+                + " AS `Non-cash diff.`, s.note AS `Note` FROM shifts s JOIN users u ON u.user_id=s.user_id ORDER BY s.shift_id DESC LIMIT 500");
     }
 }

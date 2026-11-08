@@ -33,6 +33,12 @@ public class LabelService {
         public final int cols;
         public final int rows;
         public final boolean roll;
+        public Options defaults;
+
+        public Layout(String name, double widthMm, double heightMm, int cols, int rows, boolean roll, Options defaults) {
+            this(name, widthMm, heightMm, cols, rows, roll);
+            this.defaults = defaults;
+        }
 
         public Layout(String name, double widthMm, double heightMm, int cols, int rows, boolean roll) {
             this.name = name;
@@ -59,9 +65,55 @@ public class LabelService {
     /** Label content options. */
     public static class Options {
         public boolean showShop = true;
+        public boolean showName = true;
         public boolean showPrice = true;
+        public boolean showMrp;
+        public boolean showSku;
         public boolean showQr;
         public boolean wholesalePrice;
+        public double fontScale = 1.0;
+    }
+
+    /** Label templates stored in the database (Settings-independent, editable from the label dialog). */
+    public static List<Layout> templates() throws java.sql.SQLException {
+        return com.productms.db.Jdbc.list("SELECT * FROM label_templates ORDER BY template_id", rs -> new Layout(
+                rs.getString("name"), rs.getDouble("width_mm"), rs.getDouble("height_mm"), rs.getInt("cols"), rs.getInt("rows_count"),
+                rs.getBoolean("roll"), templateOptions(rs)));
+    }
+
+    private static Options templateOptions(java.sql.ResultSet rs) throws java.sql.SQLException {
+        Options o = new Options();
+        o.showShop = rs.getBoolean("show_shop");
+        o.showName = rs.getBoolean("show_name");
+        o.showPrice = rs.getBoolean("show_price");
+        o.showMrp = rs.getBoolean("show_mrp");
+        o.showSku = rs.getBoolean("show_sku");
+        o.showQr = rs.getBoolean("show_qr");
+        o.fontScale = rs.getDouble("font_scale");
+        return o;
+    }
+
+    public static void saveTemplate(Layout l, Options o) throws java.sql.SQLException {
+        if (l.name == null || l.name.isBlank()) {
+            throw new com.productms.util.AppException("Give the template a name.");
+        }
+        if (l.widthMm < 15 || l.heightMm < 10 || l.widthMm > 210 || l.heightMm > 297 || l.cols < 1 || l.rows < 1) {
+            throw new com.productms.util.AppException("Label size must be 15-210 x 10-297 mm, with at least 1 column and row.");
+        }
+        if (!l.roll && (l.widthMm * l.cols > 210 || l.heightMm * l.rows > 297)) {
+            throw new com.productms.util.AppException("These labels do not fit on an A4 sheet (210 x 297 mm).");
+        }
+        com.productms.db.Jdbc.update("INSERT INTO label_templates (name, width_mm, height_mm, cols, rows_count, roll, show_shop, show_name, "
+                + "show_price, show_mrp, show_sku, show_qr, font_scale) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE "
+                + "width_mm=VALUES(width_mm), height_mm=VALUES(height_mm), cols=VALUES(cols), rows_count=VALUES(rows_count), roll=VALUES(roll), "
+                + "show_shop=VALUES(show_shop), show_name=VALUES(show_name), show_price=VALUES(show_price), show_mrp=VALUES(show_mrp), "
+                + "show_sku=VALUES(show_sku), show_qr=VALUES(show_qr), font_scale=VALUES(font_scale)",
+                l.name.trim(), l.widthMm, l.heightMm, l.roll ? 1 : l.cols, l.roll ? 1 : l.rows, l.roll, o.showShop, o.showName, o.showPrice,
+                o.showMrp, o.showSku, o.showQr, o.fontScale);
+    }
+
+    public static void deleteTemplate(String name) throws java.sql.SQLException {
+        com.productms.db.Jdbc.update("DELETE FROM label_templates WHERE name=?", name);
     }
 
     public static List<Variant> expand(List<Variant> variants, List<Integer> copies) {
@@ -81,7 +133,7 @@ public class LabelService {
         double cx = x + pad;
         double cw = w - pad * 2;
         double cy = y + pad;
-        float base = (float) Math.max(5, Math.min(9, h / 9));
+        float base = (float) (Math.max(5, Math.min(9, h / 9)) * (o.fontScale <= 0 ? 1 : o.fontScale));
         double qrSize = 0;
         if (o.showQr) {
             qrSize = Math.min(h - pad * 2, cw * 0.36);
@@ -95,16 +147,31 @@ public class LabelService {
             cy += g.getFontMetrics().getAscent();
             g.drawString(fit(g, Settings.shopName(), cw), (float) cx, (float) cy);
         }
-        g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 10).deriveFont(base));
-        FontMetrics fm = g.getFontMetrics();
-        cy += fm.getAscent();
-        g.drawString(fit(g, v.displayName(), cw), (float) cx, (float) cy);
+        FontMetrics fm;
+        if (o.showName) {
+            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 10).deriveFont(base));
+            fm = g.getFontMetrics();
+            cy += fm.getAscent();
+            g.drawString(fit(g, v.displayName(), cw), (float) cx, (float) cy);
+        }
+        if (o.showSku) {
+            g.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 10).deriveFont(base * 0.75f));
+            fm = g.getFontMetrics();
+            cy += fm.getAscent();
+            g.drawString(fit(g, "SKU " + v.sku, cw), (float) cx, (float) cy);
+        }
         if (o.showPrice) {
             g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 10).deriveFont(base * 1.15f));
             fm = g.getFontMetrics();
             cy += fm.getAscent();
             String price = Money.fmt(o.wholesalePrice ? v.wholesalePrice : v.retailPrice);
-            g.drawString(fit(g, Settings.currency() + " " + price, cw), (float) cx, (float) cy);
+            String mrp = o.showMrp && v.mrp.signum() > 0 ? "  MRP " + Money.fmt(v.mrp) : "";
+            g.drawString(fit(g, Settings.currency() + " " + price + mrp, cw), (float) cx, (float) cy);
+        } else if (o.showMrp && v.mrp.signum() > 0) {
+            g.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 10).deriveFont(base));
+            fm = g.getFontMetrics();
+            cy += fm.getAscent();
+            g.drawString(fit(g, "MRP " + Settings.currency() + " " + Money.fmt(v.mrp), cw), (float) cx, (float) cy);
         }
         String code = v.barcode == null || v.barcode.isBlank() ? v.sku : v.barcode;
         g.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 10).deriveFont(base * 0.8f));

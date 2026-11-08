@@ -29,6 +29,7 @@ public class StockView extends JPanel {
     public final JLabel inProduct = UiKit.title("No product selected", 14f);
     public final JLabel inInfo = UiKit.mutedLabel(" ");
     public final JTextField inQty = UiKit.field("Quantity received");
+    public final JComboBox<Object> inPack = new JComboBox<>();
     public final JTextField inCost = UiKit.field("Unit purchase price");
     public final JComboBox<Object> inSupplier = new JComboBox<>();
     public final JTextField inRef = UiKit.field("Supplier invoice / GRN no.");
@@ -89,6 +90,36 @@ public class StockView extends JPanel {
             .col("Value", BigDecimal.class, b -> b.qtyRemaining.multiply(b.unitCost).setScale(2, java.math.RoundingMode.HALF_UP));
     public final JTable btTable = new JTable(btModel);
 
+    // ---- damaged stock
+    public final DataTableModel dmModel = new DataTableModel();
+    public final JTable dmTable = new JTable(dmModel);
+    public final JButton dmDispose = UiKit.danger("Dispose (final loss)");
+    public final JButton dmRestore = UiKit.plain("Restore to sellable");
+    public final DataTableModel dmLogModel = new DataTableModel();
+    public final JTable dmLogTable = new JTable(dmLogModel);
+
+    // ---- stock counts
+    public final DataTableModel scModel = new DataTableModel();
+    public final JTable scTable = new JTable(scModel);
+    public final JButton scNew = UiKit.primary("+ New count");
+    public final JButton scSubmit = UiKit.plain("Submit for approval");
+    public final JButton scApprove = UiKit.success("Approve & book differences");
+    public final JButton scCancel = UiKit.plain("Cancel count");
+    public final JButton scSheet = UiKit.plain("Print count sheet");
+    public final JTextField scScan = UiKit.search("Scan barcode to count +1 (or qty*code)");
+    public final JComboBox<String> scShow = new JComboBox<>(new String[]{"All items", "Differences only"});
+    public final DataTableModel sciModel = new DataTableModel();
+    public final JTable sciTable = new JTable(sciModel);
+    public final JButton scSetQty = UiKit.plain("Enter counted qty");
+    public final JLabel scInfo = UiKit.mutedLabel("Select a count.");
+
+    // ---- approvals
+    public final DataTableModel apModel = new DataTableModel();
+    public final JTable apTable = new JTable(apModel);
+    public final JComboBox<String> apFilter = new JComboBox<>(new String[]{"Pending", "All"});
+    public final JButton apApprove = UiKit.success("Approve");
+    public final JButton apReject = UiKit.danger("Reject");
+
     // ---- serials
     public final JTextField srSearch = UiKit.search("Serial / IMEI or product name");
     public final DataTableModel srModel = new DataTableModel();
@@ -96,14 +127,17 @@ public class StockView extends JPanel {
 
     public StockView() {
         super(new BorderLayout());
-        for (JTable t : new JTable[]{recentTable, mvTable, btTable, srTable}) {
+        for (JTable t : new JTable[]{recentTable, mvTable, btTable, srTable, dmTable, dmLogTable, scTable, sciTable, apTable}) {
             UiKit.styleTable(t);
         }
         tabs.addTab("Stock In (receive goods)", stockInTab());
         tabs.addTab("Adjust / Damaged / Expired", adjustTab());
         tabs.addTab("Movement History", movementsTab());
         tabs.addTab("Batches & Expiry", batchesTab());
-        tabs.addTab("Serial Numbers", serialsTab());
+        tabs.addTab("Damaged Stock", damagedTab());
+        tabs.addTab("Stock Counts", countsTab());
+        tabs.addTab("Approvals", approvalsTab());
+        tabs.addTab("Serial Numbers & Warranty", serialsTab());
         add(UiKit.page("Stock", "Receive goods, correct counts, write off damaged & expired items, and trace every movement", null, tabs));
     }
 
@@ -125,7 +159,12 @@ public class StockView extends JPanel {
         f.section("Product");
         f.full(productBox(inScan, inPick, inProduct, inInfo));
         f.section("Receiving");
-        f.add("Quantity *", inQty);
+        JPanel qtyRow = new JPanel(new BorderLayout(6, 0));
+        qtyRow.setOpaque(false);
+        qtyRow.add(inQty);
+        inPack.setPreferredSize(new Dimension(150, 34));
+        qtyRow.add(inPack, BorderLayout.EAST);
+        f.add("Quantity *", qtyRow);
         f.add("Unit cost *", inCost);
         f.full(inTotal);
         f.add("Supplier", inSupplier);
@@ -226,6 +265,51 @@ public class StockView extends JPanel {
         p.add(UiKit.row(srSearch, UiKit.mutedLabel("Find which invoice and customer a serial / IMEI was sold to (warranty checks).")),
                 BorderLayout.NORTH);
         p.add(UiKit.tableCard(srTable));
+        return p;
+    }
+
+    private JPanel damagedTab() {
+        JPanel p = new JPanel(new BorderLayout(0, 10));
+        p.setBorder(BorderFactory.createEmptyBorder(12, 0, 0, 0));
+        p.setOpaque(false);
+        p.add(UiKit.row(dmDispose, dmRestore, UiKit.mutedLabel("Damaged units are kept aside (not sellable) until disposed "
+                + "or restored. Physical stock = sellable + damaged.")), BorderLayout.NORTH);
+        javax.swing.JSplitPane sp = new javax.swing.JSplitPane(javax.swing.JSplitPane.VERTICAL_SPLIT, UiKit.tableCard(dmTable),
+                UiKit.tableCard(dmLogTable));
+        sp.setResizeWeight(0.5);
+        sp.setBorder(null);
+        p.add(sp);
+        return p;
+    }
+
+    private JPanel countsTab() {
+        JPanel p = new JPanel(new BorderLayout(0, 10));
+        p.setBorder(BorderFactory.createEmptyBorder(12, 0, 0, 0));
+        p.setOpaque(false);
+        p.add(UiKit.row(scNew, scSubmit, scApprove, scCancel, scSheet), BorderLayout.NORTH);
+        JPanel items = new JPanel(new BorderLayout(0, 8));
+        items.setOpaque(false);
+        scScan.setPreferredSize(new Dimension(320, 34));
+        JPanel bar = new JPanel(new BorderLayout());
+        bar.setOpaque(false);
+        bar.add(UiKit.row(scScan, scShow, scSetQty), BorderLayout.WEST);
+        bar.add(scInfo, BorderLayout.EAST);
+        items.add(bar, BorderLayout.NORTH);
+        items.add(UiKit.tableCard(sciTable));
+        javax.swing.JSplitPane sp = new javax.swing.JSplitPane(javax.swing.JSplitPane.VERTICAL_SPLIT, UiKit.tableCard(scTable), items);
+        sp.setResizeWeight(0.3);
+        sp.setBorder(null);
+        p.add(sp);
+        return p;
+    }
+
+    private JPanel approvalsTab() {
+        JPanel p = new JPanel(new BorderLayout(0, 10));
+        p.setBorder(BorderFactory.createEmptyBorder(12, 0, 0, 0));
+        p.setOpaque(false);
+        p.add(UiKit.row(apFilter, apApprove, apReject, UiKit.mutedLabel("Adjustments at or above the approval value (Settings) "
+                + "wait here for a manager. The requester cannot approve their own (admins can).")), BorderLayout.NORTH);
+        p.add(UiKit.tableCard(apTable));
         return p;
     }
 

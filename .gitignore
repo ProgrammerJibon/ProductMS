@@ -1,0 +1,10 @@
+# Database credentials written by Settings -> Security & Backup (contains a password)
+db.properties
+
+# Local data created while the app runs
+backups/
+offline-queue/
+
+# Build output
+target/
+out/

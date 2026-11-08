@@ -32,6 +32,10 @@ public class Sale {
     public String paymentStatus = "PAID";
     public String status = "COMPLETED";
     public String note;
+    public String approvedBy;
+    public String offlineRef;
+    public String clientTxnId;
+    public BigDecimal refundedTotal = BigDecimal.ZERO;
     public LocalDateTime createdAt;
     public LocalDateTime cancelledAt;
     public String cancelReason;

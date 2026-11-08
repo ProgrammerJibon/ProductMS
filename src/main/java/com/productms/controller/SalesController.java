@@ -37,7 +37,7 @@ public class SalesController implements Module {
     public SalesController(MainController main) {
         this.main = main;
         view.btnSearch.addActionListener(e -> load());
-        view.txtSearch.addActionListener(e -> load());
+        view.txtSearch.addActionListener(e -> openScanned());
         view.cmbStatus.addActionListener(e -> load());
         view.cmbPay.addActionListener(e -> load());
         view.btnToday.addActionListener(e -> {
@@ -173,8 +173,19 @@ public class SalesController implements Module {
                 }
             }
             boolean ex = d.rbExchange.isSelected();
-            SaleService.ReturnResult r = sales.processReturn(sale.saleId, lines, ex, (String) d.cmbMethod.getSelectedItem(),
-                    d.txtReason.getText());
+            SaleService.ReturnResult r;
+            String approver = null;
+            while (true) {
+                try {
+                    r = sales.processReturn(sale.saleId, lines, ex, (String) d.cmbMethod.getSelectedItem(), d.txtReason.getText(), approver);
+                    break;
+                } catch (com.productms.util.ApprovalRequiredException need) {
+                    approver = com.productms.view.ManagerApproval.ask(view, need.reasons);
+                    if (approver == null) {
+                        return;
+                    }
+                }
+            }
             load();
             main.refreshAlerts();
             StringBuilder msg = new StringBuilder("Return " + r.returnNo + " recorded.\n\nGoods value: " + Money.cur(r.totalAmount));
@@ -192,8 +203,8 @@ public class SalesController implements Module {
                 }
             } else {
                 msg.append("\nRefund to customer: ").append(Money.cur(r.refundAmount));
-                if (r.refundAmount.signum() > 0) {
-                    msg.append(" by ").append(com.productms.model.Payment.label((String) d.cmbMethod.getSelectedItem()));
+                if (!r.refundParts.isEmpty()) {
+                    msg.append("\nPay back: ").append(String.join(", ", r.refundParts));
                 }
                 UiKit.info(view, msg.toString());
             }
@@ -206,7 +217,10 @@ public class SalesController implements Module {
         }
         Sale sale = current;
         JTextField reason = UiKit.field("Why is this sale cancelled?");
-        JComboBox<String> method = new JComboBox<>(com.productms.model.Payment.METHODS);
+        java.util.List<String> ms = new java.util.ArrayList<>(java.util.List.of("ORIGINAL"));
+        ms.addAll(java.util.Arrays.asList(com.productms.model.Payment.methods()));
+        JComboBox<String> method = new JComboBox<>(ms.toArray(new String[0]));
+        method.setRenderer(new com.productms.view.DueCollectionDialog.MethodRenderer());
         UiKit.Form f = new UiKit.Form();
         f.full(new javax.swing.JLabel("<html>Cancel <b>" + sale.invoiceNo + "</b> (" + Money.cur(sale.grandTotal)
                 + ")?<br>All items go back to stock. Money paid (" + Money.cur(sale.paidTotal) + ") is refunded.</html>"));
@@ -217,10 +231,11 @@ public class SalesController implements Module {
             return;
         }
         UiKit.guard(view, () -> {
-            sales.cancel(sale.saleId, reason.getText(), (String) method.getSelectedItem());
+            String no = sales.cancel(sale.saleId, reason.getText(), (String) method.getSelectedItem());
             load();
             main.refreshAlerts();
-            UiKit.info(view, "Sale " + sale.invoiceNo + " cancelled and stock restored.");
+            UiKit.info(view, "Sale " + sale.invoiceNo + " cancelled (reversal " + no + ").\nStock restored; the original invoice and "
+                    + "payments are kept for the records.");
         });
     }
 
@@ -232,6 +247,29 @@ public class SalesController implements Module {
             Customer c = new CustomerDAO().findById(current.customerId);
             main.collectDue(view, c);
             load();
+        });
+    }
+
+    /** Enter in the search box: a scanned invoice barcode opens that invoice directly. */
+    private void openScanned() {
+        String t = view.txtSearch.getText().trim();
+        UiKit.guard(view, () -> {
+            Sale s = t.isEmpty() ? null : sales.findByInvoice(t);
+            if (s == null) {
+                load();
+                return;
+            }
+            LocalDate d = s.createdAt.toLocalDate();
+            if (d.isBefore(UiKit.dateOf(view.dtFrom))) {
+                UiKit.setDate(view.dtFrom, d);
+            }
+            load();
+            for (int i = 0; i < view.table.getRowCount(); i++) {
+                if (view.model.row(view.table.convertRowIndexToModel(i)).saleId == s.saleId) {
+                    view.table.setRowSelectionInterval(i, i);
+                    view.table.scrollRectToVisible(view.table.getCellRect(i, 0, true));
+                }
+            }
         });
     }
 

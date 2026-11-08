@@ -1,20 +1,23 @@
 package com.productms.controller;
 
 import com.productms.dao.UserDAO;
-import com.productms.model.User;
+import com.productms.service.AuditService;
 import com.productms.service.ShiftService;
 import com.productms.util.Session;
 import com.productms.util.Settings;
+import com.productms.view.ChangePasswordDialog;
 import com.productms.view.LoginView;
 import com.productms.view.UiKit;
 import java.sql.SQLException;
 
-/** Verifies credentials against the database and opens the main window. */
+/**
+ * Signs users in. Lockout after repeated failures is stored in the database (time based),
+ * and accounts flagged with a temporary / demo password must change it before continuing.
+ */
 public class LoginController {
 
     private final LoginView view;
     private final UserDAO userDAO = new UserDAO();
-    private int failedAttempts;
 
     public LoginController() {
         view = new LoginView(Settings.shopName());
@@ -33,24 +36,27 @@ public class LoginController {
             view.showError("Please enter both username and password.");
             return;
         }
-        if (failedAttempts >= 5) {
-            view.showError("Too many failed attempts. Restart the application to try again.");
-            view.btnLogin.setEnabled(false);
-            return;
-        }
+        view.btnLogin.setEnabled(false);
         try {
-            User user = userDAO.authenticate(username, password);
-            if (user == null) {
-                failedAttempts++;
-                view.showError("Invalid username or password (" + (5 - failedAttempts) + " attempts left).");
+            UserDAO.LoginResult r = userDAO.login(username, password);
+            if (r.user == null) {
+                view.showError(r.error);
                 return;
             }
-            Session.setUser(user);
-            Session.setShift(new ShiftService().openShiftOf(user.userId));
+            Session.setUser(r.user);
+            if (r.user.mustChangePassword && !ChangePasswordDialog.show(view, r.user, true)) {
+                Session.clear();
+                view.showError("You must change your password to continue.");
+                return;
+            }
+            AuditService.log("LOGIN", "USER", r.user.userId, "Signed in", null);
+            Session.setShift(new ShiftService().openShiftOf(r.user.userId));
             view.dispose();
             new MainController().start();
         } catch (SQLException ex) {
             UiKit.error(view, "Could not connect to the database.\n" + ex.getMessage());
+        } finally {
+            view.btnLogin.setEnabled(true);
         }
     }
 }

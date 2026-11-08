@@ -14,9 +14,22 @@ public class Customer {
     public boolean active = true;
     public BigDecimal due = BigDecimal.ZERO;
     public BigDecimal totalPurchases = BigDecimal.ZERO;
+    /** NULL = unlimited credit, 0 = no credit allowed. */
+    public BigDecimal creditLimit;
+    public int paymentTermsDays = 30;
+    public BigDecimal storeCredit = BigDecimal.ZERO;
+    public String notes;
+    /** Due invoices older than the payment terms. */
+    public int overdueInvoices;
+    public BigDecimal overdueAmount = BigDecimal.ZERO;
 
     public boolean isWholesale() {
         return "WHOLESALE".equals(customerType);
+    }
+
+    /** Credit still available (null = unlimited). */
+    public BigDecimal creditAvailable() {
+        return creditLimit == null ? null : creditLimit.subtract(due);
     }
 
     @Override

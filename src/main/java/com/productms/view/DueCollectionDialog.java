@@ -26,7 +26,8 @@ public final class DueCollectionDialog {
     public static Result ask(Component parent, Customer c) {
         JTextField amount = UiKit.field("Amount received");
         amount.setText(c.due.toPlainString());
-        JComboBox<String> method = new JComboBox<>(Payment.METHODS);
+        JComboBox<String> method = new JComboBox<>(Payment.methods());
+        method.setRenderer(new MethodRenderer());
         JTextField ref = UiKit.field("TrxID / card last 4 (not needed for cash)");
         UiKit.Form f = new UiKit.Form();
         f.full(new JLabel("<html><b>" + c.name + "</b> owes <b style='color:#DC2626'>" + Money.cur(c.due)
@@ -47,5 +48,14 @@ public final class DueCollectionDialog {
             }
         }
         return null;
+    }
+
+    /** Shows payment method names instead of codes. */
+    public static class MethodRenderer extends javax.swing.DefaultListCellRenderer {
+        @Override
+        public java.awt.Component getListCellRendererComponent(javax.swing.JList<?> list, Object value, int index,
+                boolean isSelected, boolean cellHasFocus) {
+            return super.getListCellRendererComponent(list, Payment.label(String.valueOf(value)), index, isSelected, cellHasFocus);
+        }
     }
 }

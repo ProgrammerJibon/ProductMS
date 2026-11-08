@@ -112,6 +112,9 @@ public class ReceiptService {
         if (reprint) {
             out.add(Line.center("-- REPRINT --"));
         }
+        if (s.offlineRef != null && s.saleId == 0) {
+            out.add(new Line("OFFLINE - PROVISIONAL", true, true, false, null));
+        }
         out.add(Line.left(pair("Invoice:", s.invoiceNo, w)));
         out.add(Line.left(pair("Date:", s.createdAt.format(DT), w)));
         out.add(Line.left(pair("Cashier:", s.cashierName, w)));
@@ -142,6 +145,20 @@ public class ReceiptService {
             }
             if (it.serialNumbers != null) {
                 for (String t : wrap("SN: " + it.serialNumbers, w - 3, "")) {
+                    out.add(Line.left("   " + t));
+                }
+            }
+            if (it.excludedComponents != null) {
+                for (String t : wrap(it.excludedComponents, w - 3, "")) {
+                    out.add(Line.left("   " + t));
+                }
+            }
+            if (it.warrantyMonths > 0 && s.createdAt != null) {
+                out.add(Line.left("   Warranty " + it.warrantyMonths + " mo, until "
+                        + s.createdAt.toLocalDate().plusMonths(it.warrantyMonths).format(java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy"))));
+            }
+            if (it.note != null && !it.note.isBlank()) {
+                for (String t : wrap("Note: " + it.note, w - 3, "")) {
                     out.add(Line.left("   " + t));
                 }
             }
@@ -178,8 +195,16 @@ public class ReceiptService {
         if (s.returnedTotal.signum() > 0) {
             out.add(Line.left(pair("Returned goods", "-" + Money.fmt(s.returnedTotal), w)));
         }
+        if (s.refundedTotal != null && s.refundedTotal.signum() > 0) {
+            out.add(Line.left(pair("Refunded", "-" + Money.fmt(s.refundedTotal), w)));
+        }
         out.add(Line.left(rule(w, '-')));
         out.add(Line.left(pair("Items: " + s.items.size(), "Qty: " + Money.qty(qtyTotal), w)));
+        if (s.note != null && !s.note.isBlank()) {
+            for (String t : wrap(s.note, w)) {
+                out.add(Line.left(t));
+            }
+        }
         out.add(Line.barcode(s.invoiceNo));
         for (String t : wrap(Settings.get("receipt_footer", "Thank you!"), w)) {
             out.add(Line.center(t));
@@ -334,9 +359,26 @@ public class ReceiptService {
             paintLines(g, lines, printable, chars);
             return Printable.PAGE_EXISTS;
         }, pf);
-        if (!showDialog || job.printDialog()) {
+        boolean preset = HardwareService.usePrinter(job, HardwareService.receiptPrinter());
+        if (preset || !showDialog || job.printDialog()) {
             job.print();
         }
+    }
+
+    /** Plain-text receipt for sharing (WhatsApp, e-mail, clipboard). */
+    public static String plainText(Sale s) {
+        StringBuilder sb = new StringBuilder();
+        for (Line l : receiptLines(s, 58, false)) {
+            if (l.barcode == null) {
+                sb.append(l.center ? center(l.text, 32) : l.text).append('\n');
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String center(String t, int w) {
+        int pad = Math.max(0, (w - t.length()) / 2);
+        return " ".repeat(pad) + t;
     }
 
     // ================================================================== A4 invoice
@@ -350,7 +392,7 @@ public class ReceiptService {
         paper.setImageableArea(15 * MM, 15 * MM, 180 * MM, 267 * MM);
         pf.setPaper(paper);
         job.setPrintable(new A4Invoice(s), pf);
-        if (job.printDialog()) {
+        if (HardwareService.usePrinter(job, HardwareService.a4Printer()) || job.printDialog()) {
             job.print();
         }
     }

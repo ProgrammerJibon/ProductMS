@@ -1,16 +1,17 @@
-# Product Management System + POS
+# Product Management System + POS (v3)
 
 A desktop inventory and point-of-sale system for a retail / wholesale shop.
 
-**Built with:** Java 17, Swing with the FlatLaf look and feel, MVC architecture, MySQL through JDBC.
+**Built with:** Java 17, Swing with the FlatLaf look and feel, MVC architecture, MySQL / MariaDB through JDBC.
+**Libraries:** MySQL Connector/J, FlatLaf, ZXing (barcodes / QR), OpenPDF (PDF invoices), jBCrypt (password hashing).
 
-**What it covers:**
-- Products with variants, bundles, batches with expiry dates, and serial numbers / IMEI.
-- Stock in, stock out and adjustments, with a full movement history.
-- A barcode-ready POS with multiple carts, split and mobile payments, dues, and hold / resume.
-- Receipts (thermal and A4), PDF invoices and barcode labels.
-- Returns, exchanges and cancellations.
-- Cashier shifts and 15 reports.
+**What it covers**
+- **Products:** variants with custom attributes, SKUs and multiple barcodes, packs (box → pieces), quantity price tiers, MRP / minimum price, scheduled prices and discounts, warranty, tags, multiple images, combos with optional parts, soft delete, cloning, bulk edit, CSV import with preview.
+- **Stock:** batches with expiry, serial numbers / IMEI, reservations for held carts, a damaged-stock bucket, stock count sessions, approval of high-value adjustments, a full movement ledger, cost and price history.
+- **POS:** barcode / pack / scale / IMEI scanning, favourites and quick buttons, up to N carts, hold with reservation and expiry, price override and discount limits with manager approval, customer credit limits and overdue warnings, split payments over configurable methods (cash, card, bKash, Nagad, Rocket, your own), duplicate-reference detection, store credit, offline selling, cash drawer, customer display, automatic receipt printing, receipt sharing.
+- **Money & control:** idempotent checkout, refunds capped at what was paid and returned to the original payment method, cancellation by reversal, cashier shifts with cash in / out / safe drops, denomination counting and per-method reconciliation.
+- **Safety:** bcrypt passwords, time-based lockout, forced password change, restricted database account, non-destructive setup with automatic migration, daily backups with verified restore, and an audit log of who changed what.
+- **Reports:** 25.
 
 ---
 
@@ -23,7 +24,7 @@ A desktop inventory and point-of-sale system for a retail / wholesale shop.
 6. [Business rules](#6-business-rules)
 7. [Keyboard shortcuts](#7-keyboard-shortcuts)
 8. [Feature checklist](#8-feature-checklist)
-9. [Database](#9-database)
+9. [Database, migrations and backups](#9-database-migrations-and-backups)
 10. [Project structure (MVC)](#10-project-structure-mvc)
 11. [Troubleshooting](#11-troubleshooting)
 
@@ -33,65 +34,82 @@ A desktop inventory and point-of-sale system for a retail / wholesale shop.
 
 **Requirements**
 - JDK 17 or newer.
-- MySQL / MariaDB running on `localhost:3306`, user `root`, empty password. XAMPP works: start MySQL in the XAMPP Control Panel.
-- Database name: `ProductMSEasirArafat`.
+- MySQL / MariaDB on `localhost:3306` (XAMPP works: start MySQL in the XAMPP Control Panel).
+- Database name: `ProductMSJibon`.
 
-**Create the database** (pick one)
-- Just start the app. If the database is missing, it offers to create it from `db/schema.sql` and `db/seed.sql`.
-- Or load it manually in PowerShell:
-  ```powershell
-  Get-Content db\schema.sql, db\seed.sql | C:\xampp\mysql\bin\mysql.exe -uroot
-  ```
-  `schema.sql` **drops and recreates** the database. Use it to reset to clean demo data.
+**First start**
+1. Start MySQL.
+2. Run the app (see the table below). If the database does not exist, it asks once, then creates it from `db/schema.sql` and loads the demo data from `db/seed.sql`.
+3. Sign in with a demo account (section 2). You **must** choose a new password straight away.
+4. As admin, open **Settings → Security & Backup** and click **Create restricted database account…** so the app stops using MySQL `root`.
+
+**Setup is non-destructive**
+- `schema.sql` never drops anything; it only creates what is missing.
+- On every start the app brings an older database up to date: it adds new tables and columns and widens changed columns, and keeps all data.
+- Demo data is loaded only into a brand-new, empty database.
 
 **Run**
 | Where | How |
 |---|---|
-| NetBeans | File → Open Project → select this folder (Maven project) → Run (F6). `nbactions.xml` sets the main class and working folder. |
+| NetBeans | File → Open Project → this folder (Maven project) → Run (F6). `nbactions.xml` sets the main class and the working folder. |
 | Without an IDE | Double-click `run.bat`. It compiles with the jars in `lib\` and starts the app. |
-| Maven | `mvn package` builds `target/ProductMSbyEasirArafat-2.0.jar`, with its libraries copied to `target/lib`. Run `java -jar target/ProductMSbyEasirArafat-2.0.jar` from the project folder. |
+| Maven | `mvn package` builds `target/ProductMSbyJibon-2.0.jar` with its libraries in `target/lib`. Run `java -jar target/ProductMSbyJibon-2.0.jar` **from the project folder** (it needs `db/`). |
 
-**Other connection details:** create `db.properties` in the project folder with any of these keys: `host`, `port`, `user`, `password`, `database`.
+**Manual install / full reset** (PowerShell). Only the first line erases data:
+```powershell
+C:\xampp\mysql\bin\mysql.exe -uroot -e "DROP DATABASE IF EXISTS ProductMSJibon"
+Get-Content db\schema.sql, db\seed.sql | C:\xampp\mysql\bin\mysql.exe -uroot
+```
+
+**Connection settings:** `db.properties` in the project folder (keys `host`, `port`, `user`, `password`, `database`) overrides the defaults (localhost, root, empty password). The app writes this file itself when you create the restricted account. Keep it private; `.gitignore` already excludes it.
 
 **Demo data**
-- 2 users.
-- 13 categories, including subcategories.
-- 9 brands, 5 units, 3 suppliers, 3 customers.
-- 11 products / 17 variants. These include:
-  - batch-tracked milk with one **expired** batch and one **expiring** batch,
-  - an IMEI-tracked smartphone,
-  - a Mouse + Keyboard **combo**,
-  - an **out-of-stock** notebook,
-  - several **low-stock** items.
+- Users, settings, payment methods, label templates.
+- 13 categories, 9 brands, 5 units, 3 suppliers, 3 customers (with credit limits and notes).
+- 11 products / 17 variants, including:
+  - milk batches (one expired, one expiring);
+  - an IMEI-tracked phone with a 12-month warranty;
+  - a combo;
+  - an out-of-stock and some low-stock items;
+  - rice with quantity tiers and a scale PLU;
+  - a soft-drink CASE pack barcode;
+  - an extra manufacturer barcode on the mouse.
 
 ---
 
 ## 2. Logins, roles and permissions
 
-| Username | Password | Role |
+| Username | First password | Role |
 |---|---|---|
 | `admin` | `admin123` | ADMIN |
 | `cashier` | `cashier123` | CASHIER |
 
-An admin can create more users, including MANAGER accounts, in **Settings → Users & Roles**.
+**Passwords**
+- The demo passwords only work once: the app forces a change at first sign-in.
+- New passwords need at least 8 characters with letters and numbers, must not contain the username, and must not be a common password.
+- Passwords are stored with **bcrypt**. The SHA-256 hashes in `seed.sql` are upgraded to bcrypt automatically at the first sign-in.
 
+**Lockout**
+- After 5 wrong passwords (configurable), the account is locked for 15 minutes (configurable).
+- The lock is stored in the database, so restarting the app does not reset it.
+- An admin can **Unlock** it early.
+
+**Role access**
 | Module / action | CASHIER | MANAGER | ADMIN |
 |---|:-:|:-:|:-:|
 | Dashboard, POS, Sales, Customers, Shifts | ✔ | ✔ | ✔ |
 | Products, Stock, Reports, Catalog Setup | – | ✔ | ✔ |
-| Settings (shop, tax, POS rules, users) | – | – | ✔ |
-| Cancel a sale | – | ✔ | ✔ |
-| Discounts above the cashier limit (default 10%) | needs manager password | ✔ | ✔ |
-| Returns older than the return period (default 7 days) | – | ✔ | ✔ |
-| Close another user's shift | – | ✔ | ✔ |
+| Settings (shop, rules, hardware, payments, users, security, backups, audit) | – | – | ✔ |
+| Cancel a sale, approve adjustments / stock counts | – | ✔ | ✔ |
+| Approve another user's limits (manager password prompt) | – | ✔ | ✔ |
 
-**Login screen**
-- Username, password (with a show / hide eye), **Sign in** (Enter).
-- After 5 wrong attempts, login is locked until the app is restarted.
+**Per-cashier permissions** (Settings → Users & Permissions)
+- **May change selling prices:** if off, a price override needs a manager.
+- **May sell on credit:** if off, due sales need a manager.
+- **Max discount %:** blank means the shop limit.
+- **Max invoice amount:** larger invoices need a manager.
 
-**After login**
-- Admins and managers land on the **Dashboard**.
-- Cashiers land on the **POS**. If no shift is open, they are reminded and taken to **Shifts**.
+Managers and admins are not limited by these, but shop-wide maximums still apply. Every approval stores the approver's username on the sale or return and in the audit log.
 
 ---
 
@@ -112,28 +130,21 @@ An admin can create more users, including MANAGER accounts, in **Settings → Us
 │ ▲ Reports     │                                                              │
 │ ♦ Catalog     │                                                              │
 │ § Settings    │                                                              │
-│               │                                                              │
 │ User / role   │                                                              │
 │ [Log out]     │                                                              │
 └───────────────┴──────────────────────────────────────────────────────────────┘
 ```
 
-- **Sidebar:** click a module, or press **Ctrl + its number**. Numbers follow the order shown to *you*:
-
-  | Role | Ctrl+1 | Ctrl+2 | Ctrl+3 | Ctrl+4 | Ctrl+5 | Ctrl+6 | Ctrl+7 | Ctrl+8 | Ctrl+9 | Ctrl+0 |
-  |---|---|---|---|---|---|---|---|---|---|---|
-  | Admin | Dashboard | POS | Products | Stock | Sales | Customers | Shifts | Reports | Catalog Setup | Settings |
-  | Manager | Dashboard | POS | Products | Stock | Sales | Customers | Shifts | Reports | Catalog Setup | – |
-  | Cashier | Dashboard | POS | Sales | Customers | Shifts | – | – | – | – | – |
-
-- **Top bar:**
-  - Shift status: green when a shift is open, orange when none is open.
-  - Live clock.
-  - **Alerts (n):** opens a list of out-of-stock, low-stock, expiring and expired items. The count refreshes every 2 minutes and after every stock change.
-  - **Dark mode / Light mode:** switches the theme and remembers your choice.
-- **Log out** (bottom of the sidebar): warns you if any POS cart still has items.
-- **Closing the window** asks for confirmation.
-- Every screen reloads its data each time you open it.
+- **Ctrl + number** opens the modules in the order shown to you:
+  - Admin: Dashboard 1 … Settings 0.
+  - Cashier: Dashboard, POS, Sales, Customers, Shifts = Ctrl+1…5.
+- **Top bar:** shift status, clock, **Alerts (n)** (out of stock, low stock, expiring, expired; refreshed every 2 minutes), **Dark / Light mode**.
+- **At admin sign-in** a warning lists anything unsafe or pending:
+  - root database login with an empty password;
+  - a demo password still in use;
+  - adjustments waiting for approval;
+  - offline sales that failed to sync.
+- Closing the window or logging out asks for confirmation (and warns about unfinished carts).
 
 ---
 
@@ -142,384 +153,431 @@ An admin can create more users, including MANAGER accounts, in **Settings → Us
 ### 4.1 Dashboard
 | Area | Content |
 |---|---|
-| KPI cards | Today's Sales, Today's Gross Profit, Invoices Today (hover to see today's returns), This Month, Stock Value at cost, Customer Dues |
-| Alert cards | Low Stock, Out of Stock, Expiring Soon, Expired Batches. Click any of them to open the Alerts list. |
-| Sales – last 7 days | Bar chart; today's bar is highlighted |
-| Top products (30 days) | Product, quantity, revenue |
-| Recent sales | Last 12 invoices with payment status and sale status |
-| Stock & expiry alerts | Every item needing attention, sorted by urgency |
-| Buttons | **Refresh**, **+ New Sale** (opens the POS) |
+| KPI cards | Today's Sales, Today's Gross Profit, Invoices Today (hover for returns), This Month, Stock Value at cost, Customer Dues |
+| Alert cards | Low Stock, Out of Stock, Expiring Soon, Expired Batches. Click one to open the Alerts list. |
+| Panels | Sales – last 7 days (chart), Top products (30 days), Recent sales, Stock & expiry alerts |
+| Buttons | **Refresh**, **+ New Sale** |
 
 ### 4.2 POS (Point of Sale)
-**Left side: find products**
-- **Search / scan box (F1).** Type to filter the tiles. Press Enter to add:
-  - an exact barcode or SKU adds that item;
-  - `3*2000000000015` adds 3 of that item;
-  - an IMEI / serial adds that exact unit;
-  - if only one tile matches the text, it is added.
 
-  **Esc** clears the box; **↓** jumps to the cart.
-- **Category filter:** a category also shows its subcategories.
-- **Product tiles:** name, variant count or variant, price, and available stock. The bottom stripe is green (in stock), orange (low) or red (out). Click to add; a product with several variants opens a variant picker. Up to 120 tiles are shown.
-- **Footer:** number of matching products, and a cheat sheet of shortcuts.
+**Finding products (left side)**
+- **Search / scan box (F1).** Type to filter; press Enter to add. It accepts:
+  - a barcode, SKU, or **extra barcode**;
+  - a **pack barcode**, e.g. the CASE code adds 24 cans;
+  - `3*code` to add 3 at once;
+  - an **IMEI / serial** to add that exact unit;
+  - a **weighed-item label** from a scale: `21` + 5-digit PLU + 5-digit grams + check digit. For example `2100010025005` = 2.500 kg of rice. The prefix is set in Settings.
+  - If exactly one tile matches the text, it is added.
+- **View filters:** **All / ♥ Favourites / Frequent** (best sellers, 30 days) **/ Recent** (recently sold).
+- **Category** filter (includes subcategories), and **Sort** (name, best selling, custom order, price).
+- **Quick buttons:** up to 8 favourite items. Click or press **Alt+1 … Alt+8**.
+- **Product tiles:**
+  - Show price and available stock. Available means sellable stock minus reservations and minus expired / blocked batches.
+  - The stripe is green, orange or red for in stock, low or out.
+  - ♥ marks a favourite.
+  - The tooltip shows the shelf location, reserved quantity, and whether quantity prices exist.
 
-**Right side: cart**
+**The cart (right side)**
 | Control | What it does |
 |---|---|
-| Cart tabs, **+ New cart (F8)** | Up to 8 carts open at once (e.g. one customer is still shopping while you serve the next). Each tab shows its line count. |
-| Customer button **(F4)** | Search customers by name or phone, or **+ New customer** right there. Choosing a wholesale customer switches the cart to wholesale prices. Shows the customer's phone, type and previous due. |
-| **Wholesale prices (F7)** | Toggles retail / wholesale pricing for the whole cart |
-| Cart table | Item (variant, serials, "[wholesale qty]" marker), quantity with unit, unit price, discount, line total |
-| **−** / **+** (Ctrl+↓ / Ctrl+↑, numpad −/+) | Lower or raise quantity by 1. For serial items, + opens the serial picker and − removes the last serial. |
-| **Qty F2** | Number pad for any quantity or weight. Serial items reopen the serial picker. |
-| **Disc F3** | Item discount, as an amount or a percent |
-| **Remove** (Del) | Removes the selected line |
-| Totals | Line and item count, Subtotal, Discount, VAT (or "VAT (included)"), big **TOTAL**. With store credit, it shows `total → amount to pay`. |
-| **Hold (F5)** | Saves the cart under a name to the database and closes the tab |
-| **Held carts (F6)** | Resume or discard held carts. If stock changed meanwhile, you get a warning. |
-| **Cart disc. (F10)** | Discount on the whole cart, as an amount or a percent |
-| **Void cart** | Clears and closes the cart, after confirmation |
-| **Last receipt (Ctrl+P)** | Reprints your most recent sale |
-| **PAY (F9)** | Opens the payment screen. If no shift is open, it first asks for the opening cash and opens one. |
+| Cart tabs, **+ New cart (F8)** | Several carts at once (maximum set in Settings, default 8) |
+| Customer button **(F4)** | Search or add a customer. Selecting one shows a pop-up with overdue invoices, credit-limit status, store-credit balance and the customer's notes. A wholesale customer switches the cart to wholesale prices. |
+| **Wholesale prices (F7)** | Retail / wholesale for the whole cart |
+| Cart table | Item, with markers for [wholesale qty], [qty price], [price changed], [without n part(s)] for combos, the line note, and serials |
+| **− / +** (Ctrl+↓ / Ctrl+↑) | Quantity −1 / +1 (serial items open the serial picker) |
+| **Qty F2** | Number pad; shows pack sizes as a hint, e.g. "1 CASE = 24 PCS" |
+| **Disc F3** | Item discount, amount or %. Above your limit or the shop maximum → manager approval. |
+| **Price F11** | Change the unit price. Never above the MRP. Below the minimum price, or without the price-override permission → manager approval. Logged. |
+| **Note** | A note on the line, printed on the receipt |
+| **♥ Fav** | Add / remove the selected item as a favourite quick button |
+| **Remove** (Del) | Remove the line |
+| Totals | Subtotal, Discount, VAT (or "VAT (included)"), **TOTAL**. With exchange credit it shows "customer pays X" or the balance and its policy. |
+| **Hold (F5)** | Park the cart under a name. It **reserves** its stock (setting) and **expires** after N hours (setting, default 24). |
+| **Held carts (F6)** | Resume or discard. Shows the expiry time. Resuming releases the reservation and warns if stock changed. |
+| **Cart disc. (F10)** | Cart discount; checked against your limit and the shop maximum % / amount |
+| **Void cart** | Clears the cart, after confirmation; logged |
+| **Last receipt (Ctrl+P)** | Reprint your last sale |
+| **Open drawer** | Opens the cash drawer without a sale (logged) |
+| **Customer display** | Shows / hides the customer-facing window |
+| **Offline queue (n)** | Sales taken while the database was down. **Sync now**, **Retry failed**, **Discard failed…** (manager). |
+| **PAY (F9)** | Payment. If no shift is open, it asks for the opening cash first. The button locks while paying (no double sales). |
+
+**Combos with optional parts:** adding the combo asks which optional parts to include. The price drops by the parts left out, and only included parts leave stock.
 
 **Payment screen**
-- **Left:** customer, invoice total, store credit, **amount to pay**, paid, remaining / due, **change to return**, and the list of payment lines (**Remove payment line**).
+- **Left:** customer, invoice total, exchange credit, **amount to pay**, paid, remaining / due, **change**, the payment lines (**Remove payment line**), and **Use account credit** (the customer's store-credit balance).
 - **Right:**
-  - Method buttons: **Cash, Card, bKash, Nagad, Rocket**.
-  - Amount box, pre-filled with what remains.
-  - Reference field: card last 4 digits / approval code, or the TrxID for mobile banking. Required for everything except cash.
-  - Quick-cash buttons for cash: **Exact**, plus the next round notes (e.g. 5,020 / 5,050 / 5,100 / 5,500 / 6,000).
+  - **Method buttons** from Settings → Payment Methods.
+  - **Amount**, and a **Reference** field with a live format check (e.g. bKash TrxID = 10 letters/digits; card = last 4 digits or a 6-character approval code).
+  - **Quick-cash buttons:** Exact, plus the next round amounts of your notes.
   - **Add payment (Enter)**.
-  - Receipt choice: Thermal 80 mm / Thermal 58 mm / A4 invoice / No receipt.
-- **Bottom:** **Back to cart (Esc)**, **Complete sale (F9 / Ctrl+Enter)**. Pressing Enter on an empty amount once fully paid also completes the sale.
+  - **Invoice note**, and the receipt choice: Thermal 80 / 58 mm, A4, none.
+- **Bottom:** **Back to cart (Esc)**, **Complete sale (F9 / Ctrl+Enter)**.
 
-**Receipt preview (after a sale or a reprint)**
-- The headline shows the invoice number, change and due.
-- Switch between **58 mm / 80 mm / A4 invoice**.
-- **Print (Enter)**, **Save PDF** (offers to open the file), **Close (Esc)**.
+**If a limit is broken at checkout** (discount, minimum price, invoice amount, credit limit, overdue dues), a **Manager approval** box lists every reason. A manager types their username and password and the same sale is retried. It is never booked twice.
+
+**After the sale**
+- The drawer opens on cash sales (if enabled).
+- The customer display says "Your change … Thank you".
+- The receipt preview opens, or the receipt prints straight to the configured printer if **automatic printing** is on.
+- The preview offers **58 mm / 80 mm / A4**, **Print (Enter)**, **Save PDF**, **Share…** (copy the text, **Send by WhatsApp** with the receipt prefilled for the customer's number, **Send by e-mail**) and **Close**.
 
 ### 4.3 Products
-| Control | What it does |
+
+**Filters and table**
+- **Filters:** search (fuzzy, so typos like "keybord" still find Keyboard), Category, Brand, **Status** (All / Active / Inactive / **Deleted**), **Stock** (All / In / Low / Out / **Has damaged**), **Sort** (name, price, stock, newest, best selling, shelf location).
+- **Table:** SKU, Product, Variant, Category, Brand, Unit, Cost, Retail, Wholesale, Stock, Available, Status.
+- **Detail panel:**
+  - Images, with **< / >** to page through them.
+  - Barcode (with its format) and QR code.
+  - Extra barcodes and scale PLU.
+  - Prices, margin, MRP, minimum price, quantity prices, packs, VAT, discount window, warranty.
+  - Stock buckets: sellable, reserved, available, damaged, physical, reorder settings.
+
+**Buttons**
+| Button | What it does |
 |---|---|
-| Search | Name, SKU, barcode, brand, size, colour, weight (Ctrl+F) |
-| Filters | Category (includes subcategories), Brand, Status (All / Active / Inactive), Stock (All / In / Low / Out) |
-| **+ New Product** (Ctrl+N) / **Edit** / double-click a row | Opens the product editor |
-| **Deactivate / Activate** | Hides or shows the product (all its variants) in the POS; history is kept |
-| **Delete** | Permanent. Blocked if the product has sales or is part of a combo. |
-| **Stock In** | Opens Stock → Stock In with the selected item ready |
-| **Print Labels** | Barcode label printing for the selected rows (multi-select with Ctrl / Shift) |
-| **Import CSV / Export CSV / CSV Template** | Bulk create or update; export everything |
-| Table | SKU, Product, Variant, Category, Brand, Unit, Cost, Retail, Wholesale, Stock, Available, Status (IN STOCK / LOW STOCK / OUT OF STOCK / INACTIVE) |
-| Footer | Item count and stock value at cost |
-| Detail panel | Image, full details (type, tracking, prices, margin %, wholesale threshold, VAT, discount, stock, available, reorder level, description), barcode image and QR code |
+| **+ New Product** (Ctrl+N) / **Edit** / double-click | Product editor |
+| **Clone** | Copies the product as an INACTIVE product: no SKU, barcode or stock carried over |
+| **Deactivate / Activate** | Hide from / show in the POS |
+| **Delete** | Products with any stock or sales history are **soft-deleted** (hidden, history kept). Products never used are removed permanently. |
+| **Restore** | Shown with Status = Deleted |
+| **Bulk Edit** | For the selected rows: retail % or amount change, wholesale %, VAT, category, brand, reorder level, shelf, active, plus a reason. Prices are checked against minimum price and MRP and recorded in price history. |
+| **Schedule Price** | New retail / % change / new wholesale from a date and time. Applied automatically every minute while the app runs, and at start-up. **View schedule** lists them and cancels pending ones. |
+| **History** | Tabs: Price history, Cost history (weighted average), Supplier prices (from stock-ins), Change log (audit) |
+| **Stock In** | Opens Stock → Stock In with this item |
+| **Print Labels** | Label printing (4.11) |
+| **Import CSV / Export CSV / CSV Template** | See 5.18 |
 
-**Product editor**
-- **Save product** (Ctrl+S), **Cancel** (Esc).
-- If retail is below cost, it asks before saving.
+**Product editor** (Ctrl+S save, Esc cancel)
 
-**General tab**
-- Name, Category / subcategory, Brand, Unit.
-- Product type: Standard or Bundle / Combo.
-- VAT %.
-- Product discount: none / percent / fixed amount per unit.
-- Tracking: batch & expiry, *or* serial / IMEI (not both).
-- Active.
-- Description.
-- Product image: **Choose image…**, **Remove**.
+*General tab*
+- Name, category, brand, unit, type, **tags**.
+- VAT %, product discount (none / % / fixed per unit) with **start and end dates**.
+- Tracking: batch & expiry *or* serial / IMEI.
+- **Warranty (months)**, active.
+- **Custom attributes** (one "name: value" per line), description.
+- **Images:** several; **Add image… / Make main / Remove**.
 
-**Variants, SKU & Prices tab** (editable grid)
-- Columns: Size, Colour, Weight, SKU, Barcode, Cost, Retail\*, Wholesale, Wholesale-from qty, Reorder level, Opening stock (new rows only), Active.
-- **+ Add variant** copies the first row's prices.
-- **Remove variant**: a variant with sales or stock is deactivated instead of deleted.
-- **Generate size × colour…** creates every combination, e.g. S, M, L, XL × Black, White = 8 variants.
-- **Copy first row prices to all**.
-- Leave SKU / barcode blank to generate them. SKU looks like `COTCRE-00021`; the barcode is a valid internal EAN-13 starting `200…`.
+*Variants, SKU, Prices & Packs tab* (one row per sellable item)
 
-**Bundle components tab**
-- **+ Add component**, **Change qty**, **Remove**.
-- Shows the separate price, the combo price and the customer's saving.
+| Column | Meaning |
+|---|---|
+| Size, Colour, Weight, **Other attributes** | e.g. `Material=Cotton; Fit=Slim` |
+| SKU | Blank = generated from the SKU format in Settings |
+| Barcode | Blank = generated. EAN-8 / UPC-A / EAN-13 check digits are verified. |
+| Cost, Retail\*, Wholesale, Wholesale from | Prices; wholesale price applies automatically from this quantity |
+| **MRP** | Maximum retail price; can never be exceeded |
+| **Min price** | Selling below needs approval |
+| **Qty price tiers** | e.g. `25=76; 50=74; 100=72` |
+| **Packs** | e.g. `CASE=24@660#2000000000190` = 1 CASE is 24 units, sells at 660, has its own barcode |
+| **Extra barcodes** | Old packaging or supplier codes |
+| **Scale PLU** | 5 digits, for weighed-item labels |
+| Reorder at, **Reorder qty**, **Shelf** | Reorder threshold, usual order quantity, location |
+| Opening stock | New rows of untracked products only |
+| Active | |
+
+Helpers: **+ Add variant**, **Remove variant** (deactivates if used), **Generate size × colour…**, **Copy first row prices to all**.
+
+*Bundle components tab*
+- **Combo pricing:** a fixed price, or the sum of the components minus a %.
+- **+ Add component**, **Change qty**, **Toggle optional**, **Remove**.
+- Shows the price bought separately, the combo price and the saving.
+
+*Saving*
+- A **new** product with a similar name or an existing code shows a **possible-duplicate** warning.
+- Price changes on an existing product ask for a **reason** for the price history.
 
 ### 4.4 Stock
 | Tab | Controls |
 |---|---|
-| **Stock In (receive goods)** | Scan / SKU box or **Find product…**. Quantity, unit cost (shows the total purchase value), supplier, reference number (supplier invoice / GRN), note. Batch-tracked items also need batch / lot number, manufactured date, expiry date. Serial-tracked items need one serial / IMEI per line (scanner friendly). Then **Receive stock**. The right side lists goods received in the last 30 days. |
-| **Adjust / Damaged / Expired** | Choose the product. Stock count helper: enter the **physical count** → **Set from physical count** fills in the type, quantity and reason. Type: Adjustment OUT / Adjustment IN / Damaged / Expired. Quantity, batch (batch items), serials (serial items), **reason (required)**. Then **Apply adjustment** (asks to confirm). |
-| **Movement History** | From / To dates, type (Opening, Stock in, Sale, Sale cancel, Return, Adjustment in / out, Damaged, Expired), search by product / SKU / reference, **Search**, **Export CSV**. Shows date, product, quantity (+/−), running balance, unit cost, value, batch, reference, supplier, note and user. |
-| **Batches & Expiry** | Filter: all batches with stock / expiring soon / expired. Search, **Write off selected batch** (recorded as EXPIRED if past its date, otherwise DAMAGED). Columns include days left and a status (OK / EXPIRING / EXPIRED). |
-| **Serial Numbers** | Search a serial / IMEI or product to see its status (IN_STOCK / SOLD / DAMAGED), invoice, sale date and customer. Useful for warranty checks. |
+| **Stock In** | Scan / **Find product…**, quantity with a **unit or pack selector** (e.g. 2 CASE = 48 PCS; asks whether the cost is per unit or per pack), unit cost (shows total value), supplier, reference, batch / manufactured / expiry (batch items), serials one per line (serial items), note → **Receive stock**. Updates the weighted average cost and cost history. |
+| **Adjust / Damaged / Expired** | Physical-count helper, type (Adjustment OUT / IN / Damaged / Expired), quantity, batch, serials, reason. If the value is at or above the **approval value** (Settings, default 5,000) and you are not an admin, it becomes a **pending request** instead of applying. |
+| **Movement History** | Dates, type, search, **Export CSV**. Every change with quantity, running balance, cost, batch, reference, supplier, note, user. |
+| **Batches & Expiry** | All / expiring / expired; **Write off selected batch** (expired → EXPIRED; otherwise → damaged stock) |
+| **Damaged Stock** | Items in the damaged bucket (still on premises, not sellable) with value; **Dispose (final loss)** or **Restore to sellable**; log of all damaged / disposed / restored movements |
+| **Stock Counts** | **+ New count** (whole shop or one category; system quantities are frozen), **scan to count +1** (or `qty*code`; pack barcodes count the whole pack), **Enter counted qty**, show **All / Differences only**, **Print count sheet**, **Submit for approval**, **Approve & book differences** (another manager, or an admin), **Cancel count** |
+| **Approvals** | Pending / all adjustment requests; **Approve** / **Reject** with a note. The requester cannot approve their own (admins can). |
+| **Serial Numbers & Warranty** | Search a serial / IMEI, invoice or product: status, invoice, customer, phone, warranty months, **warranty until** and **IN WARRANTY / WARRANTY EXPIRED** |
 
 ### 4.5 Sales
+
 **Invoices tab**
-- **Filters:** From / To dates, search (invoice, customer name, phone), status (All / Completed / Cancelled), payment (All / Paid / Partial / Due), **Search**, **Today**, **Export CSV**.
-- **Invoice table:** invoice, date, customer, cashier, lines, total, paid, due, returned, payment status, status.
-- **Footer:** number of completed invoices, sales total, outstanding due.
-- **Details:** items (qty, price, discount, VAT, total, returned, serials) and payments (method, type: sale or due collection, amount, reference, time).
-- **Actions:**
+- **Filters:** dates, search, status, payment, **Today**, **Export CSV**.
+- **Scan an invoice barcode** (from a receipt) into the search box and press Enter to open that invoice directly. Provisional offline numbers (`OFF-…`) also work.
+- **Details:** lines (with serials) and payments.
+- **Buttons:**
+  - **View / Reprint**
+  - **Return / Refund**
+  - **Exchange**
+  - **Collect Due**
+  - **Cancel Sale** (manager; disabled once anything was returned)
 
-  | Button | What it does |
-  |---|---|
-  | **View / Reprint** (or double-click) | Receipt preview: 58 / 80 mm / A4 / PDF, marked "REPRINT" |
-  | **Return / Refund** | Return items for money |
-  | **Exchange** | Return items for store credit |
-  | **Collect Due** | Shown when the invoice has a due |
-  | **Cancel Sale** | Managers only; disabled once any item was returned |
-
-**Returns, Refunds & Cancellations tab**
-- Date range and search.
-- Shows return number (`RET-…`, or `CXL-…` for cancellations), invoice, customer, type, goods value, amount refunded, method, reason and user.
+**Returns, Refunds & Cancellations tab** shows each return: goods value, VAT part, amount refunded, **how it was paid back** (e.g. "CARD 1,312.50, CASH 200.00"), reason, user and approver.
 
 **Return dialog**
-- Per line: sold, already returned, returnable, **return qty**, **condition** (GOOD / DAMAGED), refund value.
-- **Return everything**.
-- **Refund money** (choose Cash / Card / bKash / Nagad / Rocket) or **Exchange** (store credit).
-- **Reason (required)**.
-- Serial items then ask which serials are coming back.
+- Per line: return quantity and condition (GOOD → back to stock in the same batch; DAMAGED → damaged stock).
+- **Refund money** with method **Original method(s)** (default: pays back the way the customer paid, card / mobile first, cash last) or one chosen method; or **Exchange** (store credit for a new cart).
+- **Reason** is required.
+- Refunds are capped at what was actually paid minus earlier refunds, and any due on the invoice is reduced first.
+- Refunds at or above the **refund approval amount** (default 2,000) by a cashier, and returns older than the return period, ask for manager approval.
 
 ### 4.6 Customers
-- **Find:** search by name or phone; tick **Only customers with due**.
-- **Edit:** **+ New Customer**, **Edit** (or double-click). Fields: name, phone (unique), email, address, type (Retail / Wholesale), active. The walk-in customer is fixed and can't be edited.
-- **Collect Due:** amount, method, reference. Payment goes to the oldest due invoices first.
-- **Purchase History:** every invoice of the customer with totals, paid, due and returned.
-- **Export CSV**.
+- **Filters:** search, **Only customers with due**, **Only overdue**.
+- **Columns:** purchases, due, **overdue amount**, **credit limit**, **payment terms**, **store credit**, **notes**, status (ACTIVE / OVERDUE / INACTIVE).
+- **Buttons:** **New / Edit** (name, phone, e-mail, address, type, **credit limit** (blank = none, 0 = no credit), **payment terms (days)**, **notes for the cashier**), **Collect Due**, **Purchase History**, **Store Credit** (balance history), **Export CSV**.
 
 ### 4.7 Shifts
-**Current shift card**
-- Status, opened time, cashier and opening cash.
-- Live summary:
-  - opening cash, invoices, gross sales, discounts, VAT, sales on due;
-  - received by method: Cash, Card, bKash, Nagad, Rocket, Store credit;
-  - due collected;
-  - cash refunds and other refunds;
-  - **expected cash in the drawer**.
-- **Open Shift:** number pad for the opening cash.
-- **Close Shift:** count the cash. It shows expected, counted, and SHORT or OVER. A note is required when there is a difference. It then offers to print the Z report.
-- **Print X report (mid-shift)**, **Refresh**.
 
-**Shift history**
-- Every shift with expected, counted, over / short, invoices and sales.
-- **Print selected shift report**.
+**Current shift**
+- Live summary: opening cash; sales; discounts; VAT; due; received per payment method; due collected; cash and other refunds; **cash in**; **cash out**; **safe drops**; **expected cash in drawer**.
+- Cash in / out list.
+- **Buttons:**
+  - **Open Shift**
+  - **Close Shift**
+  - **Cash In**, **Cash Out (payout)**, **Safe Drop** (each with a reason; opens the drawer if enabled)
+  - **Print X report**
+  - **Refresh**
+
+**Closing a shift**
+1. Count each note and coin. The total and over / short show live.
+2. Enter the **card / mobile totals from your slips and statements** next to the system figures.
+3. A note is required for any difference.
+4. Close, then optionally print the **Z report**. It includes the reconciliation and the note count.
+
+**Shift history:** over / short and non-cash differences per shift. **Reconciliation** shows expected vs counted / declared per method plus cash movements; **Print selected shift report**.
 
 ### 4.8 Reports
-- **Left:** list of 15 reports.
-- **Top:** From / To dates; **Today / 7 days / This month / This year**; **Run report**; **Export CSV**; **Print** (table printout with the title and date range).
-- **Bottom:** row count and totals of the summable columns.
-- Reports marked "(current)" ignore dates and show stock as it is now.
+- **Controls:** pick a report, set dates (**Today / 7 days / This month / This year**), **Run**, **Export CSV**, **Print**.
+- **Footer:** row count and totals.
+- Reports marked *(current)* ignore the dates.
 
 | Report | Shows |
 |---|---|
-| Daily Sales Summary | Per day: invoices, gross, discounts, VAT, net sales, returns, cost, gross profit, collected, due |
-| Product-wise Sales | Per variant: qty sold / returned, revenue, returned value, cost, profit net of returns |
-| Sales Profit by Invoice | Total, VAT, cost, profit and margin % per invoice |
-| Product Profit Margins *(current)* | Cost vs retail and wholesale, profit and margin % |
-| Inventory & Stock Valuation *(current)* | Stock, value at cost, value at retail, potential profit |
-| Low Stock *(current)* | Stock vs reorder level, suggested order quantity |
-| Out of Stock *(current)* | Items at zero, with the last time stock went out |
-| Expiry Report *(current)* | Batches expired or expiring within the alert window, with days left and value |
-| Damaged & Expired Products | Every write-off with quantity, loss value, batch and reason |
-| Stock Movement Summary | Per variant: received, sold, returned, adjusted, written off, net change, current stock |
-| Payment Methods | Amount and transactions per method and type (sale / due collection) |
-| Sales by Cashier | Invoices, sales, average basket, discounts, gross profit |
-| Sales by Category | Quantity, revenue, gross profit per top-level category |
-| Customer Dues *(current)* | Customers owing money, number of due invoices, oldest due date |
-| Sales Returns | All returns, refunds and cancellations |
+| Daily Sales Summary | Per day: invoices, **Gross Sales**, **Discounts**, **Net Sales (ex VAT)**, **VAT**, **Total (incl VAT)**, **Returns (ex VAT)**, **Return VAT**, **Net after Returns**, **Cost of Sales**, **Cost Returned to Stock**, **Gross Profit**, collected, due |
+| Product-wise Sales | Qty sold / returned, revenue, returned value, cost, profit net of returns |
+| Sales Profit by Invoice | Total, VAT, cost, profit, margin % |
+| Product Profit Margins *(current)* | Cost vs retail / wholesale margins |
+| Inventory & Stock Valuation *(current)* | Stock, value at cost and at retail, potential profit |
+| Low Stock / Out of Stock *(current)* | Items to reorder |
+| Expiry Report *(current)* | Expired / expiring batches with value |
+| Damaged & Expired Products | Write-offs with loss value |
+| Stock Movement Summary | Received, sold, returned, adjusted, written off, net, current |
+| Payment Methods | Amount per method and type |
+| Sales by Cashier / by Category | Sales and profit |
+| Customer Dues *(current)* | Who owes what |
+| **Customer Overdue** *(current)* | Due invoices older than each customer's terms |
+| Sales Returns | All returns, exchanges, cancellations with refund detail |
+| **Refunds by Method** | Refund amounts per method; how much went back to the original payment |
+| **Discounts & Price Overrides** | Every discounted or overridden line, with approver |
+| **Reorder Suggestions** *(current)* | Suggested order quantity (≥ the usual order quantity, covering 14 days of average sales), last supplier |
+| **Stock Buckets** *(current)* | Sellable, reserved, available, expired, damaged, physical, physical value |
+| **Price Change History** | Every price change with % and reason |
+| **Stock Count Differences** | Count results with value |
+| **Cash In / Out & Safe Drops** | All drawer movements |
+| **Shift Reconciliation** | Expected vs declared per method per shift |
+| **Warranty Register** | Sold items under warranty, serials, warranty end, status |
 
 ### 4.9 Catalog Setup
-Four tabs, each with **+ Add / Edit / Delete**:
-- **Categories & Subcategories:** name, parent (top-level or under a category), description, active. Subcategories are shown indented under their parent.
-- **Brands:** name, active.
-- **Units:** name, short name, "allow fractional quantities" (e.g. KG, Litre). Demo units: PCS, KG, L, BOX, PACK.
-- **Suppliers:** name, phone, address, active.
-
-You can't delete anything that is still in use. Deactivate it instead.
+Categories & subcategories, Brands, Units, Suppliers. Each has **+ Add / Edit / Delete**; anything still in use can't be deleted.
 
 ### 4.10 Settings (Admin)
-**General tab, Shop details** (printed on receipts and invoices)
-- Shop name, address, phone, VAT / BIN number, currency symbol, receipt footer.
+**Save settings** (top right) saves every tab. Each change is written to the audit log as "old → new".
 
-**General tab, Rules**
-- Prices include VAT (VAT is extracted) vs prices exclude VAT (VAT is added).
-- Default receipt: 80 / 58 / A4.
-- Cashiers must open a shift before selling.
-- Cashier max discount %.
-- Return period in days.
-- Expiry alert days.
-
-**Users & Roles tab**
-- **+ Add user**, **Edit**: username, full name, role, password, active.
-- **Reset password**, **Change my password**.
-- There must always be at least one active admin, and you can't deactivate yourself.
+| Tab | Contents |
+|---|---|
+| **General** | **Shop:** name, address, phone, VAT/BIN, currency, receipt footer. **POS & limits:** VAT included in prices, require shift, default receipt, **max open carts**, **held-cart expiry (hours)**, **reserve held stock**, **cashier max discount %**, **max total line discount %**, **max cart discount % and amount**, **refunds needing approval from**, return period, **exchange balance policy** (ACCOUNT / CASH / BLOCK), **cash buttons (notes)**, **product tile order**, **scale barcode prefix**, **allow offline selling**. **Inventory:** expiry alert days, **warn cashier N days before expiry**, **block sale N days before expiry**, **adjustment approval value**, **SKU format** (with example), **generated barcode type**. **Numbering:** invoice / return / cancellation **prefixes**, **number format** (tokens `{PREFIX} {YYYY} {YY} {MM} {DD} {YYMMDD} {SEQ:n}`), **counter reset** (daily / monthly / yearly / never), with a live preview. |
+| **Printing & Hardware** | Receipt printer and A4 printer (chosen from installed printers; "(ask every time)" shows the dialog), **automatic receipt printing**, **cash drawer** on the receipt printer with **Test drawer**, **customer display** |
+| **Payment Methods** | Add / edit methods: code, name, kind (cash / card / mobile / other), reference required, **reference pattern** (regular expression), hint, colour, order, active. CASH and STORE_CREDIT cannot be deactivated. |
+| **Users & Permissions** | Add / edit (role, temporary password, price override, credit sales, max discount %, max invoice amount, active), **Reset password** (forces a change), **Unlock**, **Change my password**. Shows last login and status (LOCKED / MUST CHANGE PASSWORD). At least one active admin is always kept. |
+| **Security & Backup** | Database connection (warns about root with an empty password), **Create restricted database account…**, lockout attempts and minutes, **automatic daily backup**, backups to keep, **Back up now**, **Validate a backup file…**, **Restore from backup…**, **Open backup folder**, list of backup files |
+| **Audit Log** | Dates, entity (invoice, product, variant, customer, user, settings, shift, cart, stock count, payment method), search, **Export CSV** |
 
 ### 4.11 Barcode label printing (Products → Print Labels)
-- **Item list:** product, barcode, editable **copies** (defaults to the current stock, 1–100). **+ Add product**, **Remove**.
-- **Label stock:**
-  - A4 sheet 38 × 21 mm (65 per sheet)
-  - A4 sheet 64 × 34 mm (24 per sheet)
-  - Roll 50 × 25 mm
-  - Roll 40 × 30 mm
-- **Options:** shop name, price, QR code, use wholesale price.
-- **Preview** shows the first sheet / label.
-- **Print…** opens the Windows print dialog.
-- Barcodes print as EAN-13 when valid, otherwise as Code-128.
+- **Item list:** product, barcode, editable **copies**. **+ Add product** / **Remove**.
+- **Templates** (stored in the database): A4 38×21 (65 per sheet), A4 64×34 (24), roll 50×25, roll 40×30 with MRP.
+  - **Custom size…** (width, height, columns and rows on A4, or roll).
+  - **Save as template…**, **Delete**.
+- **Content:** shop name, name, price, **MRP**, **SKU**, QR code, wholesale price, **text size**.
+- Barcodes print as EAN-8 / UPC-A / EAN-13 when the code is a valid one of those, otherwise Code-128.
+- **Preview** of the first sheet / label, then **Print…**.
 
 ---
 
 ## 5. Workflows (step by step)
 
 ### 5.1 First-time setup (Admin)
-1. **Settings → General:** enter the shop details and choose your VAT style, receipt size and rules → **Save settings**.
-2. **Settings → Users & Roles:** add managers and cashiers, then change the demo passwords.
-3. **Catalog Setup:** add your categories / subcategories, brands, units and suppliers.
-4. **Products → + New Product** for each product (or use **CSV Template** → fill it in Excel → **Import CSV**).
-5. **Stock → Stock In** to receive the opening stock (needed for batch and serial items).
-6. **Products → Print Labels** for items without a manufacturer barcode.
+1. Sign in as `admin` / `admin123` and choose a new password.
+2. **Settings → Security & Backup → Create restricted database account…**, restart the app, and set a MySQL root password (XAMPP: phpMyAdmin → User accounts).
+3. **Settings → General:** shop details, VAT style, limits, numbering. **Save settings**.
+4. **Settings → Printing & Hardware:** pick the receipt printer and enable the drawer and display if you have them.
+5. **Settings → Payment Methods:** check the reference patterns and add your own methods.
+6. **Settings → Users & Permissions:** add cashiers with their limits.
+7. **Catalog Setup:** categories, brands, units, suppliers.
+8. **Products:** add products, or **CSV Template → Import CSV**.
+9. **Stock → Stock In:** opening stock (batch and serial items).
+10. **Products → Print Labels** for items without a barcode.
 
-### 5.2 Add a product with sizes and colours
-1. **Products → + New Product**.
-2. General tab: name, category, brand, unit, VAT, any product discount.
-3. Variants tab: fill in the first row's cost / retail / wholesale / wholesale-from qty / reorder level.
-4. **Generate size × colour…** → type `S, M, L, XL` and `Black, White`. This creates 8 variants with the same prices.
-5. Change any price that differs. Enter opening stock for new rows if the product is not batch / serial tracked.
-6. **Save product.** Blank SKUs and barcodes are generated.
+### 5.2 Add a product with sizes, colours, packs and quantity prices
+1. **+ New Product.** General tab: name, category, brand, unit, VAT, tags, warranty, attributes, images.
+2. Variants tab: fill row 1 (cost, retail, wholesale, MRP, min price, tiers such as `10=600; 50=560`, packs such as `BOX=12@6800`), then **Generate size × colour…**.
+3. **Save.** If a similar product exists you are warned first.
 
-### 5.3 Create a combo / bundle
-1. **+ New Product** → Product type **Bundle / Combo**.
-2. Variants tab: set the combo's retail (and wholesale) price.
-3. Bundle components tab: **+ Add component** for each item, then **Change qty** if needed (at least 2 components). The tab shows the customer's saving.
-4. Save. A combo has no stock of its own: available = what its components allow. Selling it deducts each component.
+### 5.3 Create a combo with an optional part
+1. **+ New Product** → type **Bundle / Combo**.
+2. Bundle tab: **+ Add component** (×2 or more), select one → **Toggle optional**.
+3. Pricing: a fixed price on the Variants tab, or **sum of components minus %**.
+4. At the POS, the cashier ticks or unticks the optional part; the price and stock follow.
 
 ### 5.4 Receive goods (stock in)
-1. **Stock → Stock In**, then scan the barcode (or **Find product…**).
-2. Enter the quantity and unit cost; choose the supplier and enter their invoice number.
-3. **Batch-tracked:** enter the batch number and expiry date (manufacture date is optional). A past expiry date is rejected.
-4. **Serial-tracked:** scan one IMEI per line. The count must equal the quantity, and duplicates are rejected.
-5. **Receive stock.** Stock increases, the average cost is recalculated, and the movement is logged.
+1. **Stock → Stock In**, scan, choose **unit or pack** (e.g. CASE), enter quantity and cost.
+2. Choose the supplier and enter the invoice number.
+3. Enter the batch and expiry, or the IMEIs, when the product needs them.
+4. **Receive stock.** The average cost changes and is recorded in Cost history.
 
-### 5.5 Stock count / correction
-1. **Stock → Adjust**, choose the product, type the **physical count** → **Set from physical count**.
-2. Check the type (OUT / IN), quantity and reason → **Apply adjustment** → confirm.
+### 5.5 Physical stock count (session)
+1. **Stock → Stock Counts → + New count**, choosing the whole shop or a category.
+2. Scan every item on the shelf (each scan = +1; packs count fully), or select a row → **Enter counted qty**. **Print count sheet** for a paper count.
+3. **Submit for approval.**
+4. Another manager or an admin opens it, shows **Differences only**, and clicks **Approve & book differences**. Differences become adjustments. Batch and serial items are listed for manual adjustment.
 
-### 5.6 Damaged or expired goods
-- **Single items:** Stock → Adjust → type **Damaged** or **Expired** → quantity (batch / serials if tracked) → reason → Apply.
-- **Whole expired batch:** Stock → Batches & Expiry → filter **Expired** → select the batch → **Write off selected batch**.
-- The loss appears in **Reports → Damaged & Expired Products**.
+### 5.6 Damaged goods
+1. **Stock → Adjust**, type **Damaged**, quantity and reason. High-value items go to **Approvals** first.
+2. The units move to **Damaged Stock** (not sellable).
+3. From there, either **Dispose** (thrown away or returned to the supplier: final loss) or **Restore to sellable** (repaired).
 
-### 5.7 A normal sale (cash)
-1. *(Cashier)* **Shifts → Open Shift** and enter the opening cash. You can also skip this: PAY asks for the opening cash the first time.
-2. **POS:** scan items, or tap tiles. Weighed items ask for the weight; phones ask for the IMEI.
-3. **F9 PAY.** Type the cash received (or tap a quick-cash button such as **1,000**). The screen shows the change.
-4. **Complete sale (F9).** The receipt preview opens → **Print (Enter)**. Stock is deducted immediately.
+### 5.7 A normal sale
+1. Open a shift (or let PAY ask for the opening cash).
+2. Scan items, tap tiles or press Alt+1…8 for favourites.
+3. **F9**, then enter the cash received or tap a quick-cash button → **Complete sale**.
+4. The drawer opens and the receipt prints or shows.
 
-### 5.8 Split payment (e.g. bKash + cash)
-1. **F9 PAY** → **bKash** → type 3,000 → enter the TrxID → **Add payment**.
-2. **Cash** → the remaining amount is pre-filled. Type what the customer hands over → **Add payment**.
-3. **Complete sale.** Both payments appear on the receipt with their references.
+### 5.8 Split / mobile payment
+1. **F9** → **bKash** → amount → TrxID (format checked) → **Add payment**.
+2. **Cash** → the rest → **Complete**.
+3. A TrxID already used on another invoice is refused.
 
-### 5.9 Credit / due sale for a registered customer
-1. In the cart, press **F4** → pick (or **+ New customer**) the customer.
-2. **F9 PAY** → add a partial payment, or none.
-3. **Complete sale** → confirm "Record X as DUE". The receipt shows **INVOICE (DUE)**.
-4. Later: **Customers → Collect Due** (or **Sales → Collect Due**). Payment is applied to the oldest invoices first.
+### 5.9 Due / credit sale
+1. **F4** to select the customer. The pop-up shows overdue invoices, credit limit, store credit and notes.
+2. **F9**, take part payment or none, **Complete**, then confirm the due.
+3. A manager must approve if:
+   - the due would exceed the customer's **credit limit**;
+   - the customer has **overdue** invoices;
+   - the cashier may not sell on credit.
+4. Collect later: **Customers → Collect Due**. Payment goes to the oldest invoices first.
 
-### 5.10 Wholesale sale
-- Pick a **Wholesale** customer: the cart switches to wholesale prices automatically. Or toggle **F7**.
-- In retail mode, a line also gets the wholesale price automatically once its quantity reaches the item's *wholesale-from* quantity. The cart marks it "[wholesale qty]".
+### 5.10 Price override and discounts
+1. Select a line → **Price F11** → the new price. It can never be above the MRP. A manager must approve if the cashier lacks the permission or the price is below the minimum.
+2. **Disc F3** / **Cart disc. F10**: above your limit or the shop maximum, a manager approves on the spot.
 
-### 5.11 Discounts
-- **Item discount:** select the line → **F3** → choose Amount or Percent.
-- **Cart discount:** **F10**. It is spread over the lines in proportion to their value, so VAT stays correct.
-- **Over the limit:** if a cashier's discount is above the limit (Settings, default 10%), a manager types their username and password to approve it.
-- **Product discounts** set in the product editor apply automatically.
+### 5.11 Hold, reserve and resume
+1. **F5** names the cart. Its stock is reserved, so other tills cannot sell it.
+2. **F6** → **Resume** releases the reservation.
+3. Held carts not resumed within the expiry hours are discarded automatically and their reservations released.
 
-### 5.12 Several customers at once / hold and resume
-- **F8** opens another cart tab; switch between tabs freely.
-- **F5 Hold** saves the cart under a name, such as the customer's name. It survives a restart.
-- **F6 Held carts** → **Resume**. If stock changed in the meantime, you are warned.
+### 5.12 Return and refund to the original method
+1. **Sales** → scan the receipt barcode → **Return / Refund**.
+2. Quantities and condition, **Original method(s)**, reason → **Process return**.
+3. The message shows exactly how to pay back, e.g. "Card 1,312.50 (orig. ref 4821)". Large refunds need a manager.
 
-### 5.13 Customer return (refund)
-1. **Sales** → find the invoice (search by invoice number or phone) → **Return / Refund**.
-2. Enter the return quantity per line and the condition (**GOOD** goes back to stock in the same batch; **DAMAGED** is written off). Choose the refund method and enter the reason.
-3. For serial items, pick which serials are coming back.
-4. **Process return.** Any due on the invoice is reduced first; the rest is refunded.
+### 5.13 Exchange
+1. **Sales → Exchange** → the items → a new POS cart opens with the credit.
+2. Add the replacement items. The cart shows what the customer pays, or the balance.
+3. **F9.** A balance is handled by the **exchange balance policy**:
+   - **ACCOUNT** (default) adds it to the customer's store credit;
+   - **CASH** pays it out;
+   - **BLOCK** requires items worth at least the credit.
 
-### 5.14 Exchange (e.g. wrong size)
-1. **Sales** → invoice → **Exchange** → choose the items and reason → Process.
-2. The POS opens a new cart, **"Exchange RET-…"**, carrying the store credit.
-3. Add the replacement items → **F9**:
-   - if the new items cost more, the customer pays the difference;
-   - if they cost less, the difference is returned as cash change.
+### 5.14 Cancel a sale (manager)
+1. **Sales → Cancel Sale** → reason and refund method (default original).
+2. The invoice and its payments are **kept**. A `CXL-…` reversal records the goods, VAT, cost and the refund for each original payment.
+3. Stock, batches and serials are restored.
 
-### 5.15 Cancel a sale (manager)
-**Sales** → invoice → **Cancel Sale** → reason and refund method. All stock, batches and serials are restored. The invoice is marked CANCELLED and logged as `CXL-…`.
+### 5.15 Database down: offline selling
+1. If MySQL stops while paying, the POS offers to **save the sale offline** and prints a provisional `OFF-…` receipt.
+2. Every minute (or **Offline queue → Sync now**) the sale is booked with the same key, so never twice. The invoice keeps the `OFF-…` reference.
+3. If a sale can no longer be booked (e.g. the stock was sold meanwhile), it shows as **FAILED** for a manager: **Retry** after fixing, or **Discard** with a reason.
 
-### 5.16 Reprint a receipt
-- The last sale: **Ctrl+P** in the POS.
-- Any invoice: **Sales** → double-click it → choose 58 mm / 80 mm / A4 → **Print**, or **Save PDF**.
-
-### 5.17 End of day
-1. **Shifts → Close Shift:** count the cash and enter it. It shows expected vs counted (over / short); add a note if they differ.
+### 5.16 End of day
+1. **Shifts → Close Shift.** Count notes and coins, enter the card / mobile totals from slips, and explain any difference.
 2. Print the **Z report**.
-3. **Reports → Daily Sales Summary / Payment Methods / Sales by Cashier** → **Today** → **Export CSV** or **Print**.
+3. **Reports → Daily Sales Summary / Payment Methods / Shift Reconciliation** → Today.
+
+### 5.17 Backups and restore
+- **Backups:** a daily automatic backup is taken at start-up. **Back up now** any time.
+- **Restore:**
+  1. **Validate** the file (checksum).
+  2. **Restore** and type `RESTORE`.
+  3. A safety backup of the current data is taken first.
+  4. After restoring, row counts and the stock ledger are verified, and everyone signs in again.
 
 ### 5.18 Bulk import / export
-- **Export CSV** exports every product variant (opens in Excel).
-- **CSV Template** → fill it in → **Import CSV**:
-  - rows with the same product name + category + subcategory become variants of one product;
-  - an existing SKU is **updated**;
-  - a new or blank SKU is **created**;
-  - categories, brands and units that don't exist yet are created;
-  - errors are listed with their line numbers.
-- Columns:
-  `sku, barcode, product_name, description, category, subcategory, brand, unit, size, colour, weight, purchase_price, retail_price, wholesale_price, wholesale_min_qty, vat_percent, discount_type, discount_value, reorder_level, opening_stock, active`
+1. **Export CSV** exports all variants with every column. **CSV Template** gives an example file.
+2. **Import CSV** shows a **preview first**: each line marked CREATE / UPDATE / ERROR with the reason. **Nothing is saved yet.**
+3. **Import** writes everything in **one transaction**. If "all or nothing" is ticked, any error cancels the import; otherwise invalid rows are skipped. A failure while saving always rolls everything back.
+4. Columns: `sku, barcode, product_name, description, category, subcategory, brand, unit, size, colour, weight, extra_attributes, purchase_price, retail_price, wholesale_price, wholesale_min_qty, mrp, min_price, vat_percent, discount_type, discount_value, reorder_level, reorder_qty, location, tags, warranty_months, price_tiers, packs, extra_barcodes, opening_stock, active`
 
 ---
 
 ## 6. Business rules
 
-**Stock**
-- No sale, adjustment or write-off can take stock below zero.
-- Every change is recorded in the movement ledger with the user, time, reference and reason.
+**Checkout**
+- The sale, its lines, stock deduction, payments and invoice number are **one transaction**: all succeed or nothing is saved.
+- Each checkout carries a unique key (`client_txn_id`). A retry, a double click or an offline re-sync returns the first sale and never creates a second.
+
+**Concurrent tills**
+- Each stock change locks the item's row. Two tills selling the last units at the same moment cannot oversell: one succeeds, the other gets "not enough stock". This is tested.
+
+**Stock buckets**
+- **Sellable** = `stock_qty`.
+- **Reserved** = held carts.
+- **Available** = sellable − reserved − expired / near-expiry-blocked batches.
+- **Damaged** = quarantined, not sellable.
+- **Physical** = sellable + damaged.
 
 **Batches**
-- Expired batches are never sold.
-- Sales take stock from the batch that expires first (FEFO).
-- Returns go back to the batch the item came from.
+- Sold first-expiry-first-out.
+- Expired batches, and batches inside the "block sale" window, are never sold.
+- The cashier is warned when the batch being sold expires within the warning window.
 
-**Serials**
-- Each sold unit is linked to its invoice, so a serial / IMEI can't be sold twice.
-- A returned serial goes back to IN_STOCK, or to DAMAGED if returned damaged.
+**Costs**
+- The product cost is a **weighted average**, updated by every stock-in and stored in cost history.
+- Each sale line stores the **actual cost snapshot**: batch items use their own batch cost.
+- Returns store the cost put back. Profit reports use these snapshots, never today's cost.
 
-**Combos**
-- Availability = the minimum of (component stock ÷ quantity per combo).
-- Selling a combo deducts its components; returning it restores them.
+**Pricing order, per line**
+1. List price: override, or retail (combo: fixed, or sum − %).
+2. Lowest qualifying quantity price: tier, pack price, or wholesale-from quantity; wholesale mode uses the wholesale price.
+3. Product discount, if today is inside its window.
+4. Cashier item discount.
+5. Share of the cart discount.
+6. VAT per line, rounded half-up to 2 decimals.
 
-**Cost**
-- The purchase price is a **weighted average**, updated on every stock in.
-- Profit uses the actual cost of the batches sold.
+**Rounding:** invoice totals are sums of the rounded lines. Returning the last units of a line returns exactly what is left of that line, so VAT and totals never drift.
 
-**Price calculation, per line**
-1. Unit price: retail, or wholesale when wholesale mode is on or the wholesale-from quantity is reached.
-2. − product discount
-3. − item discount
-4. − share of the cart discount
-5. VAT: added on top, or extracted from the price (depending on the setting).
+**Limits**
+- Line discount above the shop maximum, cashier discount above the personal limit, below minimum price, price override without permission, invoice above the cashier's limit, cart discount above maximum % / amount, due above credit limit, due with overdue invoices, credit sale without permission, refund at or above the approval amount, return after the return period: each needs a manager.
+- **Exceptions:** the MRP is a hard limit, and offline sales can't get approvals.
 
 **Payments**
-- Card and mobile payments can't exceed what is owed; only cash produces change.
-- Part payment or due requires a registered customer (not walk-in).
+- References are format-checked per method.
+- The same method + reference can never be used twice.
+- Card / mobile cannot exceed the amount owed; only cash gives change.
+- Due sales need a registered customer.
 
-**Returns**
-- Allowed within the return period; managers can override it.
-- You can't return more than was sold minus what was already returned.
+**Refunds**
+- Never more than paid minus already refunded; any due is reduced first.
+- Each refund row is linked to the original payment it reverses.
 
-**Cancellation**
-- Managers only, and only if nothing has been returned from the invoice.
+**Cancellation:** a reversal record. Nothing is deleted.
 
-**Shift cash**
-- Expected cash = opening cash + cash received − cash refunds.
+**Expected cash** = opening + cash received − cash refunded + cash in − cash out − safe drops.
 
-**Invoice numbers**
-- `INV-yyMMdd-00001`
-- Returns: `RET-…`; cancellations: `CXL-…`
+**Numbers:** gap-free per prefix and period (locked counter inside the sale transaction). Defaults: `INV-yyMMdd-0001`, `RET-…`, `CXL-…`, `CNT-…` (stock counts).
+
+**Deletion:** products, categories, brands, units and suppliers with history are never physically deleted.
+
+**Audit:** sign-ins, lockouts, sales, approvals, price overrides and changes, stock changes, counts, returns, cancellations, drawer openings, held / voided carts, users, payment methods, settings, imports, backups and restores.
 
 ---
 
@@ -528,138 +586,199 @@ You can't delete anything that is still in use. Deactivate it instead.
 | Where | Key | Action |
 |---|---|---|
 | Anywhere | Ctrl+1 … Ctrl+0 | Switch module |
-| POS | F1 | Focus search / scan |
-| POS | F2 | Change quantity / serials |
+| POS | F1 | Search / scan |
+| POS | F2 | Quantity |
 | POS | F3 | Item discount |
-| POS | F4 | Choose customer |
-| POS | F5 | Hold cart |
+| POS | F4 | Customer |
+| POS | F5 | Hold |
 | POS | F6 | Held carts |
-| POS | F7 | Toggle wholesale prices |
+| POS | F7 | Wholesale |
 | POS | F8 | New cart |
 | POS | F9 | Pay |
 | POS | F10 | Cart discount |
-| POS | Ctrl+↑ / Ctrl+↓ | Quantity +1 / −1 |
+| POS | F11 | Change price |
+| POS | Alt+1 … Alt+8 | Favourite quick buttons |
+| POS | Ctrl+↑ / Ctrl+↓ | Quantity ±1 |
 | POS | Ctrl+P | Reprint last receipt |
-| POS search box | Enter / Esc / ↓ | Add item / clear / jump to cart |
-| POS cart table | Del, numpad + / − | Remove line, change quantity |
-| Payment | Enter | Add payment (or complete when fully paid) |
+| POS search box | Enter / Esc / ↓ | Add / clear / go to cart |
+| POS cart | Del, numpad + / − | Remove line, quantity |
+| Payment | Enter | Add payment, or complete when fully paid |
 | Payment | F9 or Ctrl+Enter | Complete sale |
 | Payment | Esc | Back to cart |
-| Receipt preview | Enter / Esc | Print / close |
-| Products | Ctrl+N / Ctrl+F | New product / search |
+| Receipt | Enter / Esc | Print / close |
+| Products | Ctrl+N / Ctrl+F | New / search |
 | Product editor | Ctrl+S / Esc | Save / cancel |
-| Pickers and dialogs | Enter / Esc | Select / close |
 
-Touch screens: the product tiles, variant buttons, number pads and payment buttons are all large enough to tap.
+Touch screens: the tiles, quick buttons, number pads, method buttons and big PAY button are all tap-sized.
 
 ---
 
 ## 8. Feature checklist
 
-### Product Management
-| # | Feature | Where |
-|---|---|---|
-| 1 | Add, edit, delete products | Products → New / Edit / Delete |
-| 2 | Categories and subcategories | Catalog Setup → Categories; product editor |
-| 3 | Brands | Catalog Setup → Brands |
-| 4 | Variants (size, colour, weight) | Product editor → Variants (+ size × colour generator) |
-| 5 | SKU management | Unique per variant; auto-generated or manual |
-| 6 | Barcode and QR generation | Auto EAN-13; barcode and QR in the Products detail panel |
-| 7 | Barcode label printing | Products → Print Labels |
-| 8 | Images and descriptions | Product editor → General |
-| 9 | Units (PCS, KG, Litre, Box) | Catalog Setup → Units (fractional quantities optional) |
-| 10 | Purchase and selling prices | Variant cost / retail |
-| 11 | Wholesale and retail pricing | Variant wholesale price and wholesale-from quantity |
-| 12 | Product-wise discounts | Product editor: percent or fixed per unit |
-| 13 | Stock management | Products, Stock |
-| 14 | Stock in and stock out | Stock → Stock In; Adjust (OUT) |
-| 15 | Stock adjustments | Stock → Adjust (with physical count helper) |
-| 16 | Low stock alerts | Dashboard, Alerts button, Low Stock report |
-| 17 | Out-of-stock alerts | Dashboard, Alerts button, tiles, report |
-| 18 | Expiry date tracking | Batches; Batches & Expiry tab; Expiry report |
-| 19 | Batch and serial tracking | Product editor tracking options; Stock In; Serial Numbers tab |
-| 20 | Damaged and expired products | Adjust → Damaged / Expired; batch write-off; damaged returns; report |
-| 21 | Returns and restocking | Sales → Return (good items go back to the same batch) |
-| 22 | Bundles and combos | Product type Bundle / Combo |
-| 23 | Stock movement history | Stock → Movement History |
-| 24 | Stock valuation | Inventory & Stock Valuation report; Dashboard |
-| 25 | Search and filtering | Products search and 4 filters |
-| 26 | Bulk import and export | Products → Import / Export CSV, CSV Template |
-| 27 | Activation / deactivation | Products → Deactivate / Activate; variant Active column |
-| 28 | Inventory reports | Reports (valuation, low, out, expiry, movement, damaged) |
-| 29 | Product-wise profit margins | Product Profit Margins report; Products detail panel |
-| 30 | Automatic stock deduction after sales | Checkout (including combos and FEFO batches) |
+**Status key:** ✔ done and tested · ◐ done locally, but connecting outside hardware or a paid API is left as an integration point.
 
-### Point of Sale
-| # | Feature | Where |
-|---|---|---|
-| 1 | POS dashboard | POS screen and Dashboard |
-| 2 | Fast product search | POS search box and tiles |
-| 3 | Barcode scanner integration | Scan + Enter, `qty*code`, IMEI scan |
-| 4 | Product selection and cart | Tiles and cart table |
-| 5 | Add, update, remove cart items | + / − / Qty / Remove |
-| 6 | Quantity adjustment | F2, Ctrl+↑/↓, number pad |
-| 7 | Variant selection | Variant picker for multi-variant tiles |
-| 8 | Real-time stock availability | Tile badges; checked on every add, across carts |
-| 9 | Automatic price calculation | `Cart.recalculate()` |
-| 10 | Item-wise discounts | F3 |
-| 11 | Cart-wise discounts | F10 |
-| 12 | VAT and tax | Per-product VAT %, inclusive or exclusive |
-| 13 | Customer selection | F4 |
-| 14 | Walk-in sales | Default customer |
-| 15 | Retail and wholesale sales | F7, wholesale customers, quantity threshold |
-| 16 | Cash payments | Payment screen |
-| 17 | Card payments | Payment screen (last 4 digits) |
-| 18 | bKash, Nagad, Rocket | Payment screen (TrxID) |
-| 19 | Split payments | Several payment lines |
-| 20 | Partial payments and due sales | Registered customers |
-| 21 | Cash received and change | Payment screen, quick-cash buttons |
-| 22 | Hold and resume | F5 / F6 (saved in the database) |
-| 23 | Multiple carts | Up to 8 tabs (F8) |
-| 24 | Invoice generation | `INV-yyMMdd-#####` |
-| 25 | Thermal receipts 58 / 80 mm | Receipt preview → Print |
-| 26 | A4 invoice printing | Receipt preview → A4 |
-| 27 | PDF invoice download | Receipt preview → Save PDF |
-| 28 | Receipt reprinting | Ctrl+P; Sales → View / Reprint |
-| 29 | Sales history | Sales → Invoices |
-| 30 | Returns and refunds | Sales → Return / Refund |
-| 31 | Product exchange | Sales → Exchange (store credit cart) |
-| 32 | Sales cancellation | Sales → Cancel Sale (manager) |
-| 33 | Automatic inventory updates | Sale, return, cancel and exchange all update stock |
-| 34 | Cashier shift management | Shifts |
-| 35 | Opening and closing cash | Open / Close Shift (over / short) |
-| 36 | Daily sales summary | Reports → Daily Sales Summary; Z report |
-| 37 | Product-wise sales reports | Reports → Product-wise Sales |
-| 38 | Sales profit calculation | Profit reports; Dashboard |
-| 39 | Offline POS support | Runs entirely on local MySQL, so no internet is needed. Held carts are stored in the database. *(There is no queue for selling while MySQL itself is down.)* |
-| 40 | Keyboard shortcuts and touchscreen | Section 7; large tiles, keypads and buttons |
+### 8.1 Critical technical & business-rule changes
+| Area | Implementation | Status |
+|---|---|:-:|
+| Password security | bcrypt (cost 12); legacy SHA-256 upgraded at sign-in; strength rules | ✔ |
+| Login security | Lockout stored in the database, time based (attempts and minutes in Settings), admin unlock | ✔ |
+| Demo credentials | Forced password change at first sign-in; admin warning while a demo password is in use | ✔ |
+| Database configuration | **Create restricted database account** (rights on this database only, no DROP); warning while using root without a password | ✔ |
+| Database setup | `schema.sql` non-destructive; automatic migration on start; seed only on an empty database | ✔ |
+| Atomic checkout | One transaction for sale, lines, stock, payments, number | ✔ |
+| Concurrent sales | Row locks; tested with two simultaneous tills | ✔ |
+| Idempotent payments | `client_txn_id` unique key; double click and retry protection | ✔ |
+| Sellable stock | Expired, near-expiry-blocked and reserved stock excluded everywhere | ✔ |
+| Refund validation | Capped at paid minus previous refunds; due reduced first | ✔ |
+| Exchange excess credit | Defined policy: ACCOUNT / CASH / BLOCK | ✔ |
+| Cash shifts | Cash in / out / safe drops in expected cash | ✔ |
+| Tax consistency | Per-line VAT on discounted net, half-up rounding; VAT stored on returns; exact last-unit returns | ✔ |
+| Cost snapshots | Sale and return cost snapshots; cost history | ✔ |
+| Offline mode | Distinguishes "no internet" (always fine, local DB) from "database down" (offline queue) | ✔ |
+| Database recovery | Daily automatic backup, checksum validation, safety backup and verified restore, migrations | ✔ |
+| Audit | Audit log of prices, stock, discounts, invoices, settings, users, sign-ins | ✔ |
 
-### Other
-- **Look:** modern UI with a dark mode.
-- **Security:** role-based access, SHA-256 password hashing, manager approval for large discounts, login lockout after 5 failed attempts.
-- **Setup:** the database is checked and auto-installed on start.
+### 8.2 Product Management – modifications
+| Feature | Implementation | Status |
+|---|---|:-:|
+| SKU | Unique across SKUs, barcodes, extra barcodes, pack barcodes, PLUs; custom SKU format | ✔ |
+| Barcodes | EAN-8, UPC-A, EAN-13 (check-digit validation), Code-128 | ✔ |
+| Variants | Custom "other attributes" per variant + product attributes | ✔ |
+| Prices | Price history with dates and reasons; scheduled prices | ✔ |
+| Wholesale | Multiple quantity tiers (+ pack prices, wholesale-from qty) | ✔ |
+| Discounts | Start / end dates | ✔ |
+| Images | Multiple per product | ✔ |
+| Stock | Available / reserved / damaged / physical buckets | ✔ |
+| Adjustments | Approval above a value threshold | ✔ |
+| Deletion | Soft delete with restore | ✔ |
+| Expiry | Configurable warning and sale-block windows | ✔ |
+| Import | Preview, validation, all-or-nothing transaction | ✔ |
+| Costing | Weighted average (product) vs batch cost (sale) shown separately | ✔ |
+| Bundles | Optional components; fixed or sum-minus-% pricing | ✔ |
+| Search | Fuzzy, more filters, sorting | ✔ |
+| Units | Packs (Box → PCS) at POS, stock-in and counts | ✔ |
+
+### 8.3 Product Management – new features
+| # | Feature | Where | Status |
+|---|---|---|:-:|
+| 1 | Duplicate detection | Warning when saving a new product | ✔ |
+| 2 | Cloning | Products → Clone | ✔ |
+| 3 | Custom attributes | Editor (product + variant) | ✔ |
+| 4 | Tags | Editor; searchable | ✔ |
+| 5 | Multiple images | Editor; detail panel < / > | ✔ |
+| 6 | Price history | Products → History | ✔ |
+| 7 | Multiple wholesale tiers | Variant "Qty price tiers" | ✔ |
+| 8 | Scheduled price changes | Products → Schedule Price | ✔ |
+| 9 | Scheduled discounts | Discount start / end | ✔ |
+| 10 | Price override permissions | User permission + manager approval | ✔ |
+| 11 | Warranty period | Editor (months); printed on receipt | ✔ |
+| 12 | Warranty status | Stock → Serial Numbers & Warranty; Warranty Register report | ✔ |
+| 13 | Minimum selling price | Variant "Min price" | ✔ |
+| 14 | MRP | Variant "MRP"; labels | ✔ |
+| 15 | Shelf / rack location | Variant "Shelf"; tooltip; count order | ✔ |
+| 16 | Reorder quantity | Variant "Reorder qty" | ✔ |
+| 17 | Reorder suggestions | Reports → Reorder Suggestions | ✔ |
+| 18 | Stock reservation | Held carts reserve stock | ✔ |
+| 19 | Counting sessions | Stock → Stock Counts | ✔ |
+| 20 | Audit differences | Differences view; Stock Count Differences report | ✔ |
+| 21 | Adjustment approval | Stock → Approvals | ✔ |
+| 22 | Count barcode scanning | Stock Counts scan box | ✔ |
+| 23 | Unit conversion | Packs | ✔ |
+| 24 | Packaging units | Packs with own price / barcode | ✔ |
+| 25 | Supplier price history | Products → History → Supplier prices | ✔ |
+| 26 | Cost history | Products → History → Cost history | ✔ |
+| 27 | Multiple barcodes | Variant "Extra barcodes" | ✔ |
+| 28 | Custom label templates | Label dialog: templates, custom size, save | ✔ |
+| 29 | Bulk editing | Products → Bulk Edit | ✔ |
+| 30 | Change audit history | Products → History → Change log; Audit Log | ✔ |
+
+### 8.4 POS – modifications
+| Feature | Implementation | Status |
+|---|---|:-:|
+| Search | Favourites, frequent, recent, quick buttons | ✔ |
+| Multiple carts | Maximum configurable | ✔ |
+| Hold | Expiry and reservation policy | ✔ |
+| Real-time stock | Re-validated with row locks inside the checkout transaction | ✔ |
+| Item / cart discounts | Combined line maximum, cart maximum % and amount, personal limits | ✔ |
+| Payments | Reference format validation, duplicate prevention | ✔ |
+| Due sales | Credit limits, terms, overdue warnings | ✔ |
+| Cash | Denomination buttons from Settings | ✔ |
+| Invoices | Prefixes, format and reset period | ✔ |
+| Refunds | Linked to original payments | ✔ |
+| Exchanges | Replacement cart with difference shown; balance policy | ✔ |
+| Shifts | Cash in / out / safe drops | ✔ |
+| Offline | Local queue, automatic sync, failed-sale review | ✔ |
+| Cancellation | Reversal records | ✔ |
+| Reports | Gross / net / VAT / refunds / profit separated | ✔ |
+
+### 8.5 POS – new features
+| # | Feature | Where | Status |
+|---|---|---|:-:|
+| 1–4 | Favourites, frequent, recent, quick buttons | POS view filters, Alt+1…8 | ✔ |
+| 5 | Custom sorting | Sort combo; custom order | ✔ |
+| 6 | Quantity prefix | `3*code` | ✔ |
+| 7 | Weighed barcodes | Scale prefix + PLU + grams | ✔ |
+| 8–9 | Price override + approval | F11 | ✔ |
+| 10 | Max discount validation | POS + checkout | ✔ |
+| 11–12 | Credit limit, due warnings | Customer pop-up, checkout | ✔ |
+| 13 | Duplicate reference detection | Checkout, due collection | ✔ |
+| 14 | Reference verification | Format rules per method. **Live checks with bKash / Nagad / Rocket need their merchant APIs (not connected).** | ◐ |
+| 15 | Custom payment methods | Settings → Payment Methods | ✔ |
+| 16 | Payment terminal | Approval code entered by the cashier. **A card terminal SDK is not connected.** | ◐ |
+| 17 | Cash drawer | ESC/POS kick through the receipt printer. **Needs a drawer to test.** | ◐ |
+| 18–19 | Cash in / out, safe drops | Shifts | ✔ |
+| 20 | Denomination counting | Close shift | ✔ |
+| 21 | Printer auto-selection | Settings → Printing & Hardware | ✔ |
+| 22 | Automatic receipt printing | Setting | ✔ |
+| 23 | Customer display | Second window (second monitor if present) | ✔ |
+| 24 | Digital receipt sharing | Copy / WhatsApp / e-mail from the receipt. **No SMS gateway; attach the PDF yourself.** | ◐ |
+| 25 | Invoice prefixes | Settings → Numbering | ✔ |
+| 26 | Invoice search by barcode | Sales search box | ✔ |
+| 27 | Refund to original method | Return dialog default | ✔ |
+| 28 | Refund approval | Above the approval amount | ✔ |
+| 29 | Exchange difference | Exchange cart | ✔ |
+| 30–32 | Offline queue, auto sync, failed recovery | POS → Offline queue | ✔ |
+| 33 | Duplicate checkout prevention | Idempotency key + locked PAY button | ✔ |
+| 34 | POS audit logs | Audit Log | ✔ |
+| 35 | Cashier sales limits | Max invoice amount | ✔ |
+| 36 | Cashier pricing permissions | Users & Permissions | ✔ |
+| 37 | Parked cart expiration | Held-cart expiry | ✔ |
+| 38 | Customer purchase notes | Customer notes shown at the POS | ✔ |
+| 39 | Sale item notes | Note button; printed | ✔ |
+| 40 | Shift reconciliation | Close shift + Reconciliation | ✔ |
+
+### 8.6 Original features (v1–v2)
+All 70 original features are still in place:
+- **Products:** CRUD, categories, brands, variants, SKU, barcode / QR, labels, images, units, prices, wholesale / retail, discounts, stock, stock in / out, adjustments, alerts, expiry, batch / serial, damaged / expired, returns, bundles, movement history, valuation, search, import / export, activation, reports, margins, automatic deduction.
+- **POS:** dashboard, search, scanner, cart, quantity, variants, live stock, pricing, discounts, VAT, customers, walk-in, retail / wholesale, cash / card / mobile, split, partial / due, change, hold / resume, multiple carts, invoices, 58 / 80 mm, A4, PDF, reprint, history, returns, exchange, cancellation, inventory updates, shifts, opening / closing cash, daily summary, product sales, profit, offline, shortcuts and touch.
 
 ---
 
-## 9. Database
+## 9. Database, migrations and backups
 
-**Script files**
-- `db/schema.sql`: tables, keys, checks (stock can't go negative).
-- `db/seed.sql`: demo data.
+**Files**
+- `db/schema.sql`: 41 tables. Safe to run any time: `CREATE ... IF NOT EXISTS` only.
+- `db/seed.sql`: demo data, for an empty database only.
 
-| Table | Purpose |
+**Migrations**
+- On every start, `com.productms.db.Migrations` runs `schema.sql`, then compares every column with the live database.
+- It adds missing columns and widens changed ones (e.g. `payments.method` ENUM → VARCHAR, password hash length).
+- The result is recorded as `schema_version = 3`. Upgrading a v2 database is tested: 54 changes, all data kept.
+
+| Group | Tables |
 |---|---|
-| `users`, `settings` | Accounts (SHA-256 passwords), shop and POS settings |
-| `categories` (self-referencing `parent_id`), `brands`, `units`, `suppliers`, `customers` | Master data |
-| `products`, `product_variants` | Product, plus a sellable SKU with prices and stock |
-| `bundle_items` | Combo components |
-| `product_batches`, `product_serials` | Lots with expiry; serial numbers / IMEI |
-| `stock_movements` | Ledger of every stock change (with balance after) |
-| `shifts` | Cash shifts |
-| `sales`, `sale_items`, `sale_item_allocations` | Invoices, lines (price snapshots), which batch / component was used |
-| `payments` | Sale payments and due collections, per method |
-| `sales_returns`, `sales_return_items` | Returns, exchanges, cancellations |
-| `held_carts` | Carts on hold |
+| Users & control | `users`, `settings`, `audit_log`, `doc_sequences`, `payment_methods` |
+| Master data | `categories`, `brands`, `units`, `suppliers`, `customers`, `customer_credit_txns` |
+| Products | `products`, `product_images`, `product_variants`, `variant_barcodes`, `variant_packs`, `price_tiers`, `price_history`, `scheduled_prices`, `cost_history`, `bundle_items`, `product_batches`, `product_serials` |
+| Stock | `stock_movements`, `damaged_stock_log`, `stock_reservations`, `stock_counts`, `stock_count_items`, `adjustment_requests`, `label_templates` |
+| POS & money | `shifts`, `cash_movements`, `shift_reconciliation`, `sales`, `sale_items`, `sale_item_allocations`, `payments`, `sales_returns`, `sales_return_items`, `refund_payments`, `held_carts` |
+
+**Backups**
+- Written by the app itself; no `mysqldump` needed.
+- Stored in `backups/` (the newest N are kept), one `.sql` file each, ending with a SHA-256 checksum.
+- **Restore** refuses tampered or incomplete files and takes a safety backup first. Afterwards it checks every table's row count and the stock ledger.
+
+**Offline queue:** sales are stored in `offline-queue/` until synced. Synced files move to `offline-queue/synced`, discarded ones to `offline-queue/discarded`.
 
 ---
 
@@ -668,31 +787,32 @@ Touch screens: the product tiles, variant buttons, number pads and payment butto
 ```
 ProductMSbyEasirArafat/
 ├── pom.xml, nbactions.xml      Maven + NetBeans run configuration
-├── run.bat                     compile & run without an IDE
-├── lib/                        jars for run.bat (MySQL driver, FlatLaf, ZXing, OpenPDF)
-├── db/schema.sql, seed.sql
-├── product-images/             created when you add product images
+├── run.bat                     compile & run without an IDE (jars in lib/)
+├── lib/                        mysql-connector-j, flatlaf, zxing core, openpdf, jbcrypt
+├── db/schema.sql, seed.sql     non-destructive schema, demo data
+├── backups/, offline-queue/    created at run time (git-ignored, like db.properties)
+├── product-images/             product photos copied in by the editor
 └── src/main/java/com/productms/
-    ├── Main.java               start-up: DB check / install, theme, login
-    ├── model/                  Product, Variant, Cart, CartItem, Sale, SaleItem, Payment,
-    │                           Batch, BundleItem, Customer, Category, Brand, Unit, Supplier,
-    │                           Shift, User, ReturnLine
-    ├── dao/                    ProductDAO, CustomerDAO, UserDAO, MasterDataDAO, HeldCartDAO
-    ├── service/                InventoryService, SaleService, ShiftService, ReportService,
-    │                           ReceiptService, LabelService, ImportExportService
-    ├── controller/             Login, Main, Dashboard, Pos, Product, Stock, Sales, Customer,
-    │                           Shift, Report, Catalog, Settings controllers
-    ├── view/                   screens (…View), dialogs (Payment, ReceiptPreview, Return,
-    │                           ProductEditor, LabelPrint, pickers, NumberPad), UiKit theme
-    ├── db/                     Database (connections, transactions, installer), Jdbc helper
-    └── util/                   Money, Settings, Session, BarcodeUtil, Csv, PasswordUtil
+    ├── Main.java               start-up: DB check, migration, auto backup, scheduler, login
+    ├── model/                  Product, Variant, Cart (pricing engine), CartItem, Sale, SaleItem, Payment,
+    │                           PaymentMethod, Batch, BundleItem, Customer, Shift, User, ...
+    ├── dao/                    ProductDAO, CustomerDAO, UserDAO, PaymentMethodDAO, MasterDataDAO, HeldCartDAO
+    ├── service/                SaleService (checkout / returns / cancel / dues), InventoryService, StockCountService,
+    │                           ShiftService, ReportService, ReceiptService, LabelService, ImportExportService,
+    │                           BackupService, OfflineQueue, DocNumbers, AuditService, HardwareService, SchedulerService
+    ├── controller/             one controller per screen
+    ├── view/                   screens, dialogs (Payment, ReceiptPreview, Return, ProductEditor, LabelPrint,
+    │                           ManagerApproval, ChangePassword, CustomerDisplay, TableDialog, pickers), UiKit
+    ├── db/                     Database (connections, transactions, setup, restricted account), Migrations, Jdbc
+    └── util/                   Money, Settings, Session, BarcodeUtil, PasswordUtil, Csv, AppException,
+                                ApprovalRequiredException
 ```
 
 **The layers**
-- **Model:** plain data classes. The pricing rules live in `Cart`.
-- **DAO / Service:** all SQL and business rules. Multi-step operations run in a transaction.
-- **View:** Swing components only, no SQL.
-- **Controller:** listens to the view, calls services, updates the view.
+- **Model:** data, plus the pricing rules in `Cart`.
+- **DAO / Service:** all SQL and business rules. Multi-step operations run in one transaction.
+- **View:** Swing only, no SQL.
+- **Controller:** connects the two.
 
 ---
 
@@ -700,11 +820,15 @@ ProductMSbyEasirArafat/
 
 | Problem | Fix |
 |---|---|
-| "Cannot connect to MySQL" on start | Start MySQL in the XAMPP Control Panel → **Retry** |
-| "Database not found" | Click **Yes** to create it, or run the PowerShell command in section 1 |
-| Login fails for admin | Reload the seed (section 1), or ask another admin to reset your password |
-| "No cash shift is open" | Shifts → Open Shift, or turn the rule off in Settings |
-| Can't sell an item | Check its stock / expired batches (Stock → Batches & Expiry) and that it is active |
-| Strange characters in text | Compile as UTF-8. Maven, NetBeans and `run.bat` already do. |
-| Printing | Uses the Windows print dialog. Install your thermal printer's driver, or pick "Microsoft Print to PDF". |
-| Reset all data | Re-run `db/schema.sql` + `db/seed.sql`. **This erases everything.** |
+| "Cannot connect to MySQL" | Start MySQL in XAMPP → **Retry** |
+| "Database does not exist" | Click **Yes**; it is created with demo data |
+| Locked out | Wait for the lock time, or an admin clicks **Unlock** (Settings → Users) |
+| Forgot the only admin password | In MySQL: `UPDATE users SET password_hash=SHA2('Temp1234',256), must_change_password=1, locked_until=NULL WHERE username='admin';` then sign in and change it |
+| After creating the restricted account the app cannot connect | Check `db.properties`; delete it to go back to root while you fix it |
+| "No cash shift is open" | Shifts → Open Shift (or turn the rule off in Settings) |
+| An item will not sell | Check stock buckets (reserved, expired / near-expiry batches, damaged) and that it is active |
+| "Manager approval needed" | A limit from section 6 was hit; a manager enters their credentials |
+| Offline sale FAILED | POS → Offline queue: read the problem, fix stock, **Retry**, or **Discard** with a reason |
+| Receipt prints to the wrong printer / dialog appears | Settings → Printing & Hardware → choose the printer |
+| Drawer does not open | It must be cabled to the receipt printer, and that printer selected and enabled; use **Test drawer** |
+| Restore refused | The file is not a ProductMS backup, is incomplete, or was edited (checksum) |

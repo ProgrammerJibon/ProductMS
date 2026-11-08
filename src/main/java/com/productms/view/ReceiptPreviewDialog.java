@@ -47,6 +47,44 @@ public class ReceiptPreviewDialog extends JDialog {
         JButton btnPrint = UiKit.big(UiKit.primary("Print (Enter)"), 42);
         JButton btnPdf = UiKit.big(UiKit.plain("Save PDF"), 42);
         JButton btnClose = UiKit.big(UiKit.plain("Close (Esc)"), 42);
+        JButton btnShare = UiKit.big(UiKit.plain("Share..."), 42);
+        javax.swing.JPopupMenu share = new javax.swing.JPopupMenu();
+        javax.swing.JMenuItem copy = new javax.swing.JMenuItem("Copy receipt text");
+        javax.swing.JMenuItem whatsapp = new javax.swing.JMenuItem("Send by WhatsApp");
+        javax.swing.JMenuItem email = new javax.swing.JMenuItem("Send by e-mail");
+        share.add(copy);
+        share.add(whatsapp);
+        share.add(email);
+        btnShare.addActionListener(e -> share.show(btnShare, 0, -share.getPreferredSize().height));
+        copy.addActionListener(e -> {
+            java.awt.Toolkit.getDefaultToolkit().getSystemClipboard().setContents(
+                    new java.awt.datatransfer.StringSelection(ReceiptService.plainText(sale)), null);
+            UiKit.info(this, "Receipt text copied. Paste it into any chat or message.");
+        });
+        whatsapp.addActionListener(e -> UiKit.guard(this, () -> {
+            String phone = sale.customerPhone == null ? UiKit.input(this, "Customer's mobile number (e.g. 01711000000):", "")
+                    : sale.customerPhone;
+            if (phone == null || phone.isBlank()) {
+                return;
+            }
+            String digits = phone.replaceAll("[^0-9]", "");
+            if (digits.startsWith("0")) {
+                digits = "88" + digits;
+            }
+            String url = "https://wa.me/" + digits + "?text="
+                    + java.net.URLEncoder.encode(ReceiptService.plainText(sale), java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20");
+            Desktop.getDesktop().browse(new java.net.URI(url));
+        }));
+        email.addActionListener(e -> UiKit.guard(this, () -> {
+            String to = UiKit.input(this, "Customer's e-mail address:", "");
+            if (to == null || to.isBlank()) {
+                return;
+            }
+            String subject = "Receipt " + sale.invoiceNo + " - " + com.productms.util.Settings.shopName();
+            String uri = "mailto:" + to.trim() + "?subject=" + enc(subject) + "&body=" + enc(ReceiptService.plainText(sale)
+                    + "\n(Use Save PDF to attach the invoice as a PDF.)");
+            Desktop.getDesktop().mail(new java.net.URI(uri));
+        }));
         btnPrint.addActionListener(e -> print());
         btnPdf.addActionListener(e -> savePdf());
         btnClose.addActionListener(e -> dispose());
@@ -62,13 +100,17 @@ public class ReceiptPreviewDialog extends JDialog {
         north.add(UiKit.row(t58, t80, tA4), BorderLayout.SOUTH);
         root.add(north, BorderLayout.NORTH);
         root.add(UiKit.scroll(preview));
-        root.add(UiKit.rowRight(btnPdf, btnClose, btnPrint), BorderLayout.SOUTH);
+        root.add(UiKit.rowRight(btnShare, btnPdf, btnClose, btnPrint), BorderLayout.SOUTH);
         setContentPane(root);
         UiKit.bind(root, "ESCAPE", this::dispose);
         getRootPane().setDefaultButton(btnPrint);
         setSize(720, 760);
         setLocationRelativeTo(owner);
         render();
+    }
+
+    private static String enc(String s) {
+        return java.net.URLEncoder.encode(s, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private void setFormat(String f) {
